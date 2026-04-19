@@ -804,7 +804,6 @@ class new_pyrodigal_manager:
 			
 			for seq in self.current_genes:
 				self.current_genes[seq].write_translations(self.genes_aa, seq)
-				self.protein_seqs[seq] = {}
 				
 			self.genes_aa = self.genes_aa.getvalue()
 		
