@@ -1861,7 +1861,7 @@ def file_v_db_worker(query_args):
 		results = []
 		shared_acc_counts = []
 	else:
-		results = np.zeros(shape = num_tgts, dtype = np.float_)
+		results = np.zeros(shape = num_tgts, dtype = np.float64)
 		shared_acc_counts = np.zeros(shape = num_tgts, dtype = np.int32)
 	
 	if db_is_in_mem:
@@ -3855,7 +3855,7 @@ def single_query(qf, tf, output, verbose, threads, do_compress):
 		jacc = intersect/union
 		results.append(jacc)
 		
-	results = np.array(results, dtype = np.float_)
+	results = np.array(results, dtype = np.float64)
 	
 	jacc_mean = np.mean(results)
 	jacc_std = np.std(results)
