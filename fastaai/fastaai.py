@@ -461,7 +461,10 @@ class new_pyhmmer_manager:
 		
 	def load_hmm_from_file(self, hmm_file):
 		ar = agnostic_reader(hmm_file)
-		hmm_text = ar.read()
+		try:
+			hmm_text = ar.read()
+		finally:
+			ar.close()
 		hmm_io = io.BytesIO(hmm_text.encode(encoding = "ascii"))
 		self.convert_hmm_to_digital(hmm_io)
 			
@@ -868,6 +871,13 @@ class agnostic_reader:
 			
 	def __iter__(self):
 		return agnostic_reader_iterator(self)
+
+	def read(self):
+		"""Return the full file contents as text."""
+		contents = self.handle.read()
+		if self.is_gz and isinstance(contents, bytes):
+			return contents.decode(encoding = "ascii")
+		return contents
 		
 	def close(self):
 		self.handle.close()
