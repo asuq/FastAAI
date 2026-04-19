@@ -169,6 +169,22 @@ def read_fasta(file):
 		deflines[cur_prot] = defline
 		
 	return contents, deflines
+
+
+def safe_sql_identifier(value):
+	"""Return a SQLite-safe identifier fragment."""
+	safe_value = re.sub(r"[^0-9A-Za-z_]+", "_", str(value))
+	safe_value = re.sub(r"_+", "_", safe_value).strip("_")
+	if len(safe_value) == 0:
+		safe_value = "value"
+	if safe_value[0].isdigit():
+		safe_value = "n_" + safe_value
+	return safe_value
+
+
+def build_temp_table_name(query_name, accession_name):
+	"""Build a temporary table name that is safe for SQLite."""
+	return "tmp_" + safe_sql_identifier(query_name) + "_" + safe_sql_identifier(accession_name)
 	
 class fasta_file:
 	def __init__(self, file, type = "genome"):
@@ -1895,8 +1911,7 @@ def file_v_db_worker(query_args):
 				#Each kmer needs to be a tuple.
 				these_kmers = [(int(kmer),) for kmer in one]
 			
-				temp_name = "_" + qname +"_" + acc
-				temp_name = temp_name.replace(".", "_")
+				temp_name = build_temp_table_name(qname, acc)
 				
 				tcurs.execute("CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)")
 				tconn.commit()
@@ -2962,8 +2977,7 @@ def on_disk_work_one(placeholder):
 					#Each kmer needs to be a tuple.
 					these_kmers = [(int(kmer),) for kmer in one]
 				
-					temp_name = "_" + qname +"_" + acc_name
-					temp_name = temp_name.replace(".", "_")
+					temp_name = build_temp_table_name(qname, acc_name)
 					
 					curs.execute("CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)")
 					insert_table = "INSERT INTO " + temp_name + " VALUES (?)"
