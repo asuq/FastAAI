@@ -990,19 +990,36 @@ class input_file:
 		timer = datetime.datetime.now()
 		time = timer.strftime(time_format)
 		return time
+
+	def _timing_value(self, start_value, end_value):
+		"""Return one timing stage in seconds."""
+		if end_value is None:
+			return 0.0
+		if isinstance(end_value, datetime.datetime):
+			if not isinstance(start_value, datetime.datetime):
+				raise TypeError("Timing values must be datetime objects before conversion.")
+			return (end_value - start_value).total_seconds()
+		return float(end_value)
+
+	def get_partial_timings(self):
+		"""Return preprocessing stage durations in seconds."""
+		protein_pred = self._timing_value(self.init_time, self.prot_pred_time)
+		hmm_search = self._timing_value(self.prot_pred_time, self.hmm_search_time)
+		besthits = self._timing_value(self.hmm_search_time, self.besthits_time)
+		return protein_pred, hmm_search, besthits
 		
 	def partial_timings(self):
-		protein_pred = self.prot_pred_time-self.init_time
-		hmm_search = self.hmm_search_time-self.prot_pred_time
-		besthits = self.besthits_time-self.hmm_search_time
-		
-		protein_pred = protein_pred.total_seconds()
-		hmm_search = hmm_search.total_seconds()
-		besthits = besthits.total_seconds()
-		
-		self.prot_pred_time = protein_pred
-		self.hmm_search_time = hmm_search
-		self.besthits_time = besthits
+		"""Format preprocessing stage durations for console output."""
+		protein_pred, hmm_search, besthits = self.get_partial_timings()
+		return (
+			"Protein prediction: "
+			+ str(round(protein_pred, 2))
+			+ "s | HMM search: "
+			+ str(round(hmm_search, 2))
+			+ "s | Best hits: "
+			+ str(round(besthits, 2))
+			+ "s"
+		)
 	
 	#Functions for externally setting status and file paths of particular types
 	def set_genome(self, path):
@@ -1286,7 +1303,7 @@ class input_file:
 		if self.trans_table is None:
 			self.trans_table = "unknown"
 		
-		self.partial_timings()
+		self.prot_pred_time, self.hmm_search_time, self.besthits_time = self.get_partial_timings()
 		
 	def add_triplet(self, genome_path = None, protein_path = None, hmm_path = None):
 		if genome_path is not None:
