@@ -11,7 +11,7 @@ Core pipeline
    numeric AAI values; enforce strict structure.
 2) Validate tables:
    - input_list.tsv: accession, path (1:1, paths must exist).
-   - metadata.csv : required fields present & parseable (see REQUIRED_NONEMPTY_COLS).
+   - metadata.tsv : required fields present & parseable (see REQUIRED_NONEMPTY_COLS).
    - Name identity: every matrix name must resolve to metadata by plain accession or
      composite alias.
 3) Cluster: complete-linkage on distance d = 1 - ANI/100; cut at (1 - threshold)
@@ -57,7 +57,7 @@ Strict validation:
   - Gcode must be 4 or 11 (hard fail).
   - Assembly_Level normalized case-insensitively to exactly:
         {'Complete Genome','Chromosome','Scaffold','Contig'} (no synonyms).
-  - Required CSV fields must be present & parseable; missing/unparsable => hard fail.
+  - Required metadata TSV fields must be present & parseable; missing/unparsable => hard fail.
   - accession <-> path must be 1:1 and path must exist on disk.
 
 Threading:
@@ -123,7 +123,7 @@ def parse_args() -> argparse.Namespace:
         "--metadata",
         required=True,
         type=Path,
-        help="CSV with full metadata columns.",
+        help="TSV with full metadata columns.",
     )
     p.add_argument(
         "-t",
@@ -433,7 +433,7 @@ def resolve_metadata_accession_columns(columns: list[str]) -> list[str]:
     """
     accession_columns = [column for column in ("accession", "Accession") if column in columns]
     if not accession_columns:
-        die("metadata CSV missing accession column. Expected 'accession' or 'Accession'.")
+        die("metadata TSV missing accession column. Expected 'accession' or 'Accession'.")
     return accession_columns
 
 
@@ -453,14 +453,14 @@ def resolve_metadata_accession_value(
     unique_values = sorted(set(values))
     if len(unique_values) > 1:
         die(
-            "metadata CSV accession columns disagree at row "
+            "metadata TSV accession columns disagree at row "
             f"{row_number}: {unique_values}"
         )
     if not unique_values:
-        die(f"metadata CSV accession is empty at row {row_number}")
+        die(f"metadata TSV accession is empty at row {row_number}")
     accession = unique_values[0]
     if accession.upper() == "NA":
-        die(f"metadata CSV accession is 'NA' at row {row_number}")
+        die(f"metadata TSV accession is 'NA' at row {row_number}")
     return accession
 
 
@@ -563,32 +563,32 @@ def load_matrix(path: Path) -> tuple[list[str], "np.ndarray", dict[str, int]]:
     """
     Load a FastAAI full tab-separated matrix and return:
         - names: list of accession names in matrix order
-        - ani:   full symmetric ANI matrix (n x n), float64
+        - aai:   full symmetric AAI matrix (n x n), float64
         - name_to_idx: mapping from name -> row/column index
     """
     import numpy as np  # local import for type name
 
     if not path.is_file():
-        die(f"ANI matrix file not found: {path}")
+        die(f"AAI matrix file not found: {path}")
 
     with path.open("rt", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle, delimiter="\t")
         rows = [row for row in reader if row]
 
     if not rows:
-        die("ANI matrix is empty.")
+        die("AAI matrix is empty.")
 
     header = rows[0]
     if len(header) < 2:
-        die("ANI matrix header must contain 'query_genome' plus at least one genome name.")
+        die("AAI matrix header must contain 'query_genome' plus at least one genome name.")
     if header[0] != "query_genome":
         die(
-            f"ANI matrix first header cell must be 'query_genome', got: '{header[0]}'"
+            f"AAI matrix first header cell must be 'query_genome', got: '{header[0]}'"
         )
 
     names = header[1:]
     if len(names) < 2:
-        die("ANI matrix must contain at least two genomes.")
+        die("AAI matrix must contain at least two genomes.")
 
     if len(set(names)) != len(names):
         seen: set[str] = set()
@@ -597,12 +597,12 @@ def load_matrix(path: Path) -> tuple[list[str], "np.ndarray", dict[str, int]]:
             if name in seen and name not in duplicates:
                 duplicates.append(name)
             seen.add(name)
-        die(f"ANI matrix header contains duplicate genome names: {duplicates[:10]}")
+        die(f"AAI matrix header contains duplicate genome names: {duplicates[:10]}")
 
     matrix_rows = rows[1:]
     if len(matrix_rows) != len(names):
         die(
-            f"ANI matrix must be square: expected {len(names)} data rows, found {len(matrix_rows)}."
+            f"AAI matrix must be square: expected {len(names)} data rows, found {len(matrix_rows)}."
         )
 
     ani = np.zeros((len(names), len(names)), dtype=np.float64)
@@ -610,14 +610,14 @@ def load_matrix(path: Path) -> tuple[list[str], "np.ndarray", dict[str, int]]:
         expected_width = len(names) + 1
         if len(row) != expected_width:
             die(
-                f"ANI matrix row {row_index + 1} has {len(row)} columns, expected {expected_width}."
+                f"AAI matrix row {row_index + 1} has {len(row)} columns, expected {expected_width}."
             )
 
         row_name = row[0]
         expected_name = names[row_index]
         if row_name != expected_name:
             die(
-                f"ANI matrix row {row_index + 1} name '{row_name}' does not match header "
+                f"AAI matrix row {row_index + 1} name '{row_name}' does not match header "
                 f"name '{expected_name}' at the same position."
             )
 
@@ -626,12 +626,12 @@ def load_matrix(path: Path) -> tuple[list[str], "np.ndarray", dict[str, int]]:
                 value = float(raw_value)
             except ValueError:
                 die(
-                    f"Non-numeric ANI value at row '{row_name}', column "
+                    f"Non-numeric AAI value at row '{row_name}', column "
                     f"'{names[column_index]}': '{raw_value}'"
                 )
             if not (0.0 <= value <= 100.0):
                 die(
-                    f"ANI value out of range [0,100] at row '{row_name}', column "
+                    f"AAI value out of range [0,100] at row '{row_name}', column "
                     f"'{names[column_index]}': {value}"
                 )
             ani[row_index, column_index] = value
@@ -649,16 +649,16 @@ def load_matrix(path: Path) -> tuple[list[str], "np.ndarray", dict[str, int]]:
                     break
             if len(mismatches) >= 5:
                 break
-        die(f"ANI matrix is not symmetric (first mismatches): {mismatches}")
+        die(f"AAI matrix is not symmetric (first mismatches): {mismatches}")
 
     np.fill_diagonal(ani, 100.0)
-    logging.info("Loaded ANI matrix with %d taxa.", len(names))
+    logging.info("Loaded AAI matrix with %d taxa.", len(names))
     name_to_idx = {name: index for index, name in enumerate(names)}
     return names, ani, name_to_idx
 
 
 # --------------------------------------------------------------------------- #
-# TSV/CSV loading + structural checks
+# TSV loading + structural checks
 # --------------------------------------------------------------------------- #
 def load_and_check_tables(
     input_list: Path,
@@ -666,13 +666,13 @@ def load_and_check_tables(
     matrix_names: list[str],
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]], dict[str, str]]:
     """
-    Load input_list.tsv and metadata CSV, perform structural checks:
+    Load input_list.tsv and metadata.tsv, perform structural checks:
 
       - Keep 'NA' as literal strings (not NaN)
       - TSV: required lowercase columns 'accession' and 'path'
       - TSV: accession and path must be unique (1:1 mapping)
       - TSV: every path must exist on disk
-      - CSV: required metadata columns must be present
+      - metadata TSV: required metadata columns must be present
       - Matrix labels resolve to metadata by direct accession or composite alias
       - Resolved metadata accessions must exist in input_list.tsv
 
@@ -683,7 +683,7 @@ def load_and_check_tables(
     if not input_list.is_file():
         die(f"Input TSV not found: {input_list}")
     if not metadata.is_file():
-        die(f"Metadata CSV not found: {metadata}")
+        die(f"Metadata TSV not found: {metadata}")
 
     def read_rows(path: Path, delimiter: str) -> tuple[list[dict[str, str]], list[str]]:
         with path.open("r", encoding="utf-8", newline="") as handle:
@@ -697,7 +697,7 @@ def load_and_check_tables(
         return rows, list(reader.fieldnames)
 
     tsv_rows, tsv_columns = read_rows(input_list, "\t")
-    csv_rows, csv_columns = read_rows(metadata, ",")
+    csv_rows, csv_columns = read_rows(metadata, "\t")
 
     # TSV: required cols and bijection accession <-> path
     for col in ("accession", "path"):
@@ -732,14 +732,14 @@ def load_and_check_tables(
         if not Path(p_str).exists():
             die(f"Path does not exist for accession '{acc}': {p_str}")
 
-    # CSV: presence of columns
+    # Metadata TSV: presence of columns
     accession_columns = resolve_metadata_accession_columns(csv_columns)
     for column in ("Cluster_ID", "Organism_Name"):
         if column not in csv_columns:
-            die(f"metadata CSV missing required column: '{column}'")
+            die(f"metadata TSV missing required column: '{column}'")
     missing_cols = [c for c in REQUIRED_NONEMPTY_COLS if c not in csv_columns]
     if missing_cols:
-        die(f"Metadata CSV missing required columns: {missing_cols}")
+        die(f"Metadata TSV missing required columns: {missing_cols}")
 
     csv_by_acc: dict[str, dict[str, str]] = {}
     plain_aliases: dict[str, str] = {}
@@ -748,7 +748,7 @@ def load_and_check_tables(
     for row_number, row in enumerate(csv_rows, start=2):
         accession = resolve_metadata_accession_value(row, accession_columns, row_number)
         if accession in csv_by_acc:
-            die(f"Duplicate Accession(s) in metadata CSV (first few): {[accession]}")
+            die(f"Duplicate Accession(s) in metadata TSV (first few): {[accession]}")
         csv_by_acc[accession] = row
         add_alias(plain_aliases, accession, accession, "plain accession alias")
 
@@ -778,7 +778,7 @@ def load_and_check_tables(
         sanitised_composite_aliases=sanitised_composite_aliases,
     )
 
-    # Identity / coverage: resolved metadata accessions subset of TSV intersect CSV (extras warn)
+    # Identity / coverage: resolved metadata accessions subset of the two TSV inputs (extras warn)
     resolved_accessions = set(matrix_to_accession.values())
     tsv_acc = set(tsv_by_acc)
     csv_acc = set(csv_by_acc)
@@ -794,13 +794,13 @@ def load_and_check_tables(
     extras_csv = sorted(csv_acc - resolved_accessions)
     if extras_tsv:
         logging.warning(
-            "Ignoring %d TSV accession(s) not resolved from the ANI matrix (first 20): %s",
+            "Ignoring %d TSV accession(s) not resolved from the AAI matrix (first 20): %s",
             len(extras_tsv),
             extras_tsv[:20],
         )
     if extras_csv:
         logging.warning(
-            "Ignoring %d CSV accession(s) not resolved from the ANI matrix (first 20): %s",
+            "Ignoring %d metadata TSV accession(s) not resolved from the AAI matrix (first 20): %s",
             len(extras_csv),
             extras_csv[:20],
         )
@@ -829,7 +829,7 @@ def build_genome_metadata(
     for matrix_name in names:
         accession = matrix_to_accession[matrix_name]
         if accession not in csv_df or accession not in tsv:
-            die(f"Accession '{accession}' missing from TSV or CSV after alignment.")
+            die(f"Accession '{accession}' missing from input_list.tsv or metadata.tsv after alignment.")
 
         row = csv_df[accession]
 
@@ -852,7 +852,7 @@ def build_genome_metadata(
         # Ensure chosen columns exist and non-empty/non-'NA'
         for col in (comp_col, cont_col):
             if col not in row:
-                die(f"Metadata CSV missing required column '{col}' for accession '{accession}'")
+                die(f"Metadata TSV missing required column '{col}' for accession '{accession}'")
             val = str(row.get(col, "")).strip()
             if val == "" or val.upper() == "NA":
                 die(f"Required column '{col}' empty or 'NA' for accession '{accession}'")
@@ -896,7 +896,7 @@ def cluster_complete_linkage(
     threshold: float,
 ) -> dict[int, list[int]]:
     """
-    Complete-linkage clustering on an ANI matrix.
+    Complete-linkage clustering on an AAI matrix.
     Merge clusters only when every cross-cluster pair has ANI >= threshold.
     """
     import numpy as np
@@ -1440,8 +1440,8 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
     Run the full clustering and representative selection pipeline.
 
     Steps:
-      1) Load ANI matrix.
-      2) Load and validate TSV/CSV tables.
+      1) Load AAI matrix.
+      2) Load and validate TSV tables.
       3) Build per-genome metadata.
       4) Complete-linkage clustering.
       5) Parallel representative selection.
@@ -1460,7 +1460,7 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
     except ValueError as exc:
         die(str(exc))
 
-    # 1) ANI matrix
+    # 1) AAI matrix
     names, ani, name_to_idx = load_matrix(args.ani_matrix)
 
     # 2) Tables + structural checks

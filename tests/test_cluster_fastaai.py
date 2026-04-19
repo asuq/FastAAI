@@ -37,14 +37,14 @@ def write_text(path: Path, content: str) -> None:
 class ClusterFastAAITests(unittest.TestCase):
     """Verify FastAAI matrix parsing and clustering behaviour."""
 
-    def write_metadata_csv(
+    def write_metadata_tsv(
         self,
         path: Path,
         rows: list[dict[str, str]],
         *,
         accession_header: str = "Accession",
     ) -> None:
-        """Write a metadata CSV fixture with a configurable accession header."""
+        """Write a metadata TSV fixture with a configurable accession header."""
         fieldnames = [
             accession_header,
             "Cluster_ID",
@@ -62,7 +62,7 @@ class ClusterFastAAITests(unittest.TestCase):
             "Contamination_gcode11",
         ]
         with path.open("w", encoding="ascii", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
             writer.writeheader()
             writer.writerows(rows)
 
@@ -93,7 +93,7 @@ class ClusterFastAAITests(unittest.TestCase):
         }
 
     def test_load_matrix_accepts_valid_square_matrix(self) -> None:
-        """Load a valid FastAAI matrix and normalise the diagonal."""
+        """Load a valid FastAAI matrix, log AAI wording, and normalise the diagonal."""
         with tempfile.TemporaryDirectory() as tempdir:
             matrix_path = Path(tempdir) / "FastAAI_matrix.txt"
             write_text(
@@ -109,13 +109,15 @@ class ClusterFastAAITests(unittest.TestCase):
                 + "\n",
             )
 
-            names, ani, name_to_idx = load_matrix(matrix_path)
+            with self.assertLogs(level="INFO") as captured:
+                names, ani, name_to_idx = load_matrix(matrix_path)
 
             self.assertEqual(names, ["A", "B", "C"])
             self.assertEqual(name_to_idx["B"], 1)
             self.assertAlmostEqual(ani[0, 1], 97.0)
             self.assertAlmostEqual(ani[1, 2], 95.5)
             self.assertAlmostEqual(ani[0, 0], 100.0)
+            self.assertIn("Loaded AAI matrix with 3 taxa.", "\n".join(captured.output))
 
     def test_load_matrix_accepts_fastaai_coded_numeric_values(self) -> None:
         """Accept FastAAI-coded matrix values, including 15.0 and 95.0."""
@@ -180,7 +182,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 load_matrix(matrix_path)
 
     def test_load_matrix_rejects_non_numeric_values(self) -> None:
-        """Reject matrices with non-numeric ANI values."""
+        """Reject matrices with non-numeric AAI values."""
         with tempfile.TemporaryDirectory() as tempdir:
             matrix_path = Path(tempdir) / "FastAAI_matrix.txt"
             write_text(
@@ -222,7 +224,7 @@ class ClusterFastAAITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             genome_path = temp_path / "A.fna"
             write_text(genome_path, ">A\nATGC\n")
             write_text(
@@ -230,7 +232,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 "Accession\tPath\n"
                 f"A\t{genome_path}\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [self.metadata_row("A", "C1", "Organism_A")],
             )
@@ -239,11 +241,11 @@ class ClusterFastAAITests(unittest.TestCase):
                 load_and_check_tables(input_list_path, metadata_path, ["A"])
 
     def test_load_and_check_tables_accepts_lowercase_metadata_accession_header(self) -> None:
-        """Accept lowercase accession in metadata.csv."""
+        """Accept lowercase accession in metadata.tsv."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             genome_path = temp_path / "A.fna"
             write_text(genome_path, ">A\nATGC\n")
             write_text(
@@ -251,7 +253,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 "accession\tpath\n"
                 f"A\t{genome_path}\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [
                     self.metadata_row(
@@ -279,7 +281,7 @@ class ClusterFastAAITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             genome_path = temp_path / "A.fna"
             write_text(genome_path, ">A\nATGC\n")
             write_text(
@@ -287,7 +289,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 "accession\tpath\n"
                 f"A\t{genome_path}\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [self.metadata_row("A", "cluster1", "Organism A")],
             )
@@ -307,7 +309,7 @@ class ClusterFastAAITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             genome_path = temp_path / "A.fna"
             write_text(genome_path, ">A\nATGC\n")
             write_text(
@@ -315,7 +317,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 "accession\tpath\n"
                 f"A\t{genome_path}\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [self.metadata_row("A", "cluster.1", "Organism A")],
             )
@@ -336,7 +338,7 @@ class ClusterFastAAITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             for accession in ("A.1", "A_1"):
                 genome_path = temp_path / f"{accession}.fna"
                 write_text(genome_path, f">{accession}\nATGC\n")
@@ -351,7 +353,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 )
                 + "\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [
                     self.metadata_row("A.1", "cluster.1", "Organism A"),
@@ -367,7 +369,7 @@ class ClusterFastAAITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             genome_path = temp_path / "A.fna"
             write_text(genome_path, ">A\nATGC\n")
             write_text(
@@ -375,7 +377,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 "accession\tpath\n"
                 f"A\t{genome_path}\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [self.metadata_row("A", "", "Organism_A")],
             )
@@ -427,7 +429,7 @@ class ClusterFastAAITests(unittest.TestCase):
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             outdir = temp_path / "out"
 
             write_text(
@@ -463,7 +465,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 )
                 + "\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [
                     {
@@ -563,7 +565,7 @@ class ClusterFastAAITests(unittest.TestCase):
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             outdir = temp_path / "out"
 
             write_text(
@@ -593,7 +595,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 )
                 + "\n",
             )
-            self.write_metadata_csv(
+            self.write_metadata_tsv(
                 metadata_path,
                 [
                     {
@@ -652,7 +654,7 @@ class ClusterFastAAITests(unittest.TestCase):
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
             input_list_path = temp_path / "input_list.tsv"
-            metadata_path = temp_path / "metadata.csv"
+            metadata_path = temp_path / "metadata.tsv"
             outdir = temp_path / "out"
 
             write_text(
@@ -698,7 +700,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 )
 
             write_text(input_list_path, "\n".join(input_lines) + "\n")
-            self.write_metadata_csv(metadata_path, metadata_rows)
+            self.write_metadata_tsv(metadata_path, metadata_rows)
 
             args = argparse.Namespace(
                 ani_matrix=matrix_path,
