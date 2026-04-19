@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastaai.fastaai import agnostic_reader
 from fastaai.fastaai import find_hmm
 from fastaai.fastaai import new_pyhmmer_manager
+from fastaai.fastaai import normalise_pyhmmer_text
 from fastaai.fastaai import pyhmmer_manager
 
 
@@ -41,6 +42,12 @@ class AgnosticReaderTests(unittest.TestCase):
 
 class HmmLoaderTests(unittest.TestCase):
 	"""Verify the bundled HMM file can be loaded."""
+
+	def test_normalise_pyhmmer_text_accepts_bytes_and_strings(self):
+		"""Accept both legacy and current PyHMMER text field types."""
+		self.assertEqual(normalise_pyhmmer_text(b"protein_1"), "protein_1")
+		self.assertEqual(normalise_pyhmmer_text("protein_2"), "protein_2")
+		self.assertIsNone(normalise_pyhmmer_text(None))
 
 	def test_load_hmm_from_file(self):
 		"""Load the bundled HMM models without a reader failure."""
