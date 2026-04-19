@@ -3074,6 +3074,7 @@ class db_db_remake:
 			
 		self.query_names = None
 		self.target_names = None
+		self.num_result_groups = 0
 		
 		self.num_queries = None
 		self.num_targets = None
@@ -3223,6 +3224,7 @@ class db_db_remake:
 		query_groups = []
 		for grouping in split_seq_indices(np.arange(self.num_queries), self.threads):
 			query_groups.append(np.arange(grouping[0], grouping[1]))
+		self.num_result_groups = len(query_groups)
 		
 		result_queue = multiprocessing.Queue()
 		remaining_procs = self.threads
@@ -3287,6 +3289,7 @@ class db_db_remake:
 		query_groups = []
 		for grouping in split_seq_indices(np.arange(self.num_queries), self.threads):
 			query_groups.append(np.arange(grouping[0], grouping[1]))
+		self.num_result_groups = len(query_groups)
 		
 		#query_database_path, target_database_path, num_tgt, query_queue, target_gak, tpres, sd, 
 		#sty, output_dir, progress_queue, qnames, tnames, valids, temp_dir
@@ -3331,9 +3334,20 @@ class db_db_remake:
 		if self.style == "matrix":
 			self.write_mat_from_files(result_files, tempdir_path)
 			
+	def validate_result_files(self, result_files):
+		"""Validate matrix partial result files before combining them."""
+		if len(result_files) != self.num_result_groups:
+			raise RuntimeError("Unexpected number of matrix partial result files.")
+		if len(set(result_files)) != len(result_files):
+			raise RuntimeError("Duplicate matrix partial result files detected.")
+		missing_files = [path for path in result_files if not os.path.exists(path)]
+		if len(missing_files) > 0:
+			raise RuntimeError("Missing matrix partial result files detected.")
+
 	def write_mat_from_files(self, result_files, tempdir_path):
 		#tempdir_path = os.path.normpath(self.output_base+"/temp")
-	
+
+		self.validate_result_files(result_files)
 		result_files = sorted_nicely(result_files)
 		
 		#print("Combining:")
@@ -3341,7 +3355,7 @@ class db_db_remake:
 		#	print(f)
 		
 		if self.verbose:
-			tracker = progress_tracker(total = self.threads, step_size = 2, message = "Finalizing results.")
+			tracker = progress_tracker(total = len(result_files), step_size = 2, message = "Finalizing results.")
 		else:
 			print("\nFinalizing results.")
 		
