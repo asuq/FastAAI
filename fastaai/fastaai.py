@@ -2829,7 +2829,17 @@ def one_work(placeholder):
 		prog_queue.put(q)
 	
 	prog_queue.put("done")
-	
+	if style == "matrix":
+		if store:
+			if len(holder) == 0:
+				return None
+			hold_together = np.vstack(holder)
+			np.savetxt(group_id, hold_together, delimiter = "\t", fmt='%4d')
+		else:
+			outwriter.close()
+			if len(query_grouping) == 0:
+				return None
+		return group_id
 	return None
 
 def two_work(i):
@@ -3018,6 +3028,11 @@ def on_disk_work_one(placeholder):
 		
 	curs.close()
 	prog_queue.put("done")
+	if style == "matrix":
+		outwriter.close()
+		if len(query_grouping) == 0:
+			return None
+		return group_id
 	
 def on_disk_work_two(i):
 	outwriter.close()
@@ -3244,15 +3259,14 @@ class db_db_remake:
 					pass
 		
 		if self.style == "matrix":
-			result_files = []
-			
-			for result in pool.map(two_work, range(0, self.threads)):
-				result_files.append(result)
+			result_files = [result for result in some_results if result is not None]
 			
 			pool.close()
 		
 			self.write_mat_from_files(result_files, tempdir_path)
 		else:
+			for result in some_results:
+				pass
 			pool.close()
 
 	#This needs to be implemented from existing code.
@@ -3307,9 +3321,10 @@ class db_db_remake:
 					pass
 		
 		if self.style == "matrix":
-			result_files = []
-			for result in pool.map(on_disk_work_two, range(0, self.threads)):
-				result_files.append(result)
+			result_files = [result for result in some_results if result is not None]
+		else:
+			for result in some_results:
+				pass
 			
 		pool.close()
 			
