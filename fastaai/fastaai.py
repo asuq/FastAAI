@@ -119,31 +119,52 @@ def normalise_pyhmmer_text(value):
 		return value.decode("utf-8")
 	return str(value)
 
+
+def decode_text_buffer(value, file_path):
+	"""Decode FASTAAI text inputs with a small compatibility fallback."""
+	for encoding in ("utf-8", "latin-1"):
+		try:
+			return value.decode(encoding)
+		except UnicodeDecodeError:
+			continue
+	raise ValueError("Unable to decode text input: " + str(file_path))
+
 def read_fasta(file):
 	cur_seq = ""
 	cur_prot = ""
+	defline = ""
 	
 	contents = {}
 	deflines = {}
 	
 	fasta = agnostic_reader(file)
-	for line in fasta:
+	for line_number, line in enumerate(fasta, start = 1):
+		line = line.strip()
+		if len(line) == 0:
+			continue
+
 		if line.startswith(">"):
-			if len(cur_seq) > 0:
+			if len(cur_prot) > 0:
 				contents[cur_prot] = cur_seq
 				deflines[cur_prot] = defline
 				
 			cur_seq = ""
-			cur_prot = line.strip().split()[0][1:]
-			defline = line.strip()[len(cur_prot)+1 :].strip()
+			cur_prot = line.split()[0][1:]
+			if len(cur_prot) == 0:
+				fasta.close()
+				raise ValueError("Malformed FASTA in " + str(file) + ": empty header at line " + str(line_number))
+			defline = line[len(cur_prot)+1 :].strip()
 			
 		else:
-			cur_seq += line.strip()
+			if len(cur_prot) == 0:
+				fasta.close()
+				raise ValueError("Malformed FASTA in " + str(file) + ": sequence data found before the first header at line " + str(line_number))
+			cur_seq += line
 				
 	fasta.close()
 	
 	#Final iter
-	if len(cur_seq) > 0:
+	if len(cur_prot) > 0:
 		contents[cur_prot] = cur_seq
 		deflines[cur_prot] = defline
 		
@@ -845,17 +866,14 @@ class new_pyrodigal_manager:
 class agnostic_reader_iterator:
 	def __init__(self, reader):
 		self.handle_ = reader.handle
-		self.is_gz_ = reader.is_gz
+		self.path_ = reader.path
 		
 	def __next__(self):
-		if self.is_gz_:
-			line = self.handle_.readline().decode()
-		else:
-			line = self.handle_.readline()
+		line = self.handle_.readline()
 		
 		#Ezpz EOF check
 		if line:
-			return line
+			return decode_text_buffer(line, self.path_)
 		else:
 			raise StopIteration
 
@@ -871,9 +889,9 @@ class agnostic_reader:
 		self.is_gz = is_gz
 		
 		if is_gz:
-			self.handle = gzip.open(self.path)
+			self.handle = gzip.open(self.path, "rb")
 		else:
-			self.handle = open(self.path)
+			self.handle = open(self.path, "rb")
 			
 	def __iter__(self):
 		return agnostic_reader_iterator(self)
@@ -881,9 +899,7 @@ class agnostic_reader:
 	def read(self):
 		"""Return the full file contents as text."""
 		contents = self.handle.read()
-		if self.is_gz and isinstance(contents, bytes):
-			return contents.decode(encoding = "ascii")
-		return contents
+		return decode_text_buffer(contents, self.path)
 		
 	def close(self):
 		self.handle.close()
