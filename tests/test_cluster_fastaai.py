@@ -20,8 +20,10 @@ MODULE_SPEC.loader.exec_module(CLUSTER_FASTAAI)
 
 assign_cluster_ids = CLUSTER_FASTAAI.assign_cluster_ids
 load_matrix = CLUSTER_FASTAAI.load_matrix
+load_and_check_tables = CLUSTER_FASTAAI.load_and_check_tables
 normalise_threshold = CLUSTER_FASTAAI.normalise_threshold
 run_pipeline = CLUSTER_FASTAAI.run_pipeline
+sanitise = CLUSTER_FASTAAI.sanitise
 
 
 BUSCO = "C:98.0%[S:97.0%,D:1.0%],F:1.0%,M:1.0%,n:200"
@@ -34,6 +36,61 @@ def write_text(path: Path, content: str) -> None:
 
 class ClusterFastAAITests(unittest.TestCase):
     """Verify FastAAI matrix parsing and clustering behaviour."""
+
+    def write_metadata_csv(
+        self,
+        path: Path,
+        rows: list[dict[str, str]],
+        *,
+        accession_header: str = "Accession",
+    ) -> None:
+        """Write a metadata CSV fixture with a configurable accession header."""
+        fieldnames = [
+            accession_header,
+            "Cluster_ID",
+            "Assembly_Name",
+            "Organism_Name",
+            "Gcode",
+            "N50",
+            "Assembly_Level",
+            "BUSCO_bacillota_odb12",
+            "Scaffolds",
+            "Genome_Size",
+            "Completeness_gcode4",
+            "Completeness_gcode11",
+            "Contamination_gcode4",
+            "Contamination_gcode11",
+        ]
+        with path.open("w", encoding="ascii", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def metadata_row(
+        self,
+        accession: str,
+        cluster_id: str,
+        organism_name: str,
+        *,
+        accession_header: str = "Accession",
+    ) -> dict[str, str]:
+        """Build a minimal metadata row fixture."""
+        return {
+            accession_header: accession,
+            "Cluster_ID": cluster_id,
+            "Assembly_Name": f"{accession}_asm",
+            "Organism_Name": organism_name,
+            "Gcode": "11",
+            "N50": "100000",
+            "Assembly_Level": "Scaffold",
+            "BUSCO_bacillota_odb12": BUSCO,
+            "Scaffolds": "10",
+            "Genome_Size": "4000000",
+            "Completeness_gcode4": "98.0",
+            "Completeness_gcode11": "98.0",
+            "Contamination_gcode4": "0.5",
+            "Contamination_gcode11": "0.5",
+        }
 
     def test_load_matrix_accepts_valid_square_matrix(self) -> None:
         """Load a valid FastAAI matrix and normalise the diagonal."""
@@ -160,6 +217,176 @@ class ClusterFastAAITests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 load_matrix(matrix_path)
 
+    def test_load_and_check_tables_requires_lowercase_input_headers(self) -> None:
+        """Reject input_list.tsv when it does not use lowercase headers."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.csv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "Accession\tPath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_csv(
+                metadata_path,
+                [self.metadata_row("A", "C1", "Organism_A")],
+            )
+
+            with self.assertRaises(SystemExit):
+                load_and_check_tables(input_list_path, metadata_path, ["A"])
+
+    def test_load_and_check_tables_accepts_lowercase_metadata_accession_header(self) -> None:
+        """Accept lowercase accession in metadata.csv."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.csv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_csv(
+                metadata_path,
+                [
+                    self.metadata_row(
+                        "A",
+                        "C1",
+                        "Organism_A",
+                        accession_header="accession",
+                    )
+                ],
+                accession_header="accession",
+            )
+
+            tsv, csv_by_acc, matrix_to_accession = load_and_check_tables(
+                input_list_path,
+                metadata_path,
+                ["A"],
+            )
+
+            self.assertIn("A", tsv)
+            self.assertIn("A", csv_by_acc)
+            self.assertEqual(matrix_to_accession["A"], "A")
+
+    def test_load_and_check_tables_logs_info_for_raw_composite_match(self) -> None:
+        """Log INFO when a matrix name matches the raw composite alias."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.csv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_csv(
+                metadata_path,
+                [self.metadata_row("A", "cluster1", "Organism A")],
+            )
+
+            with self.assertLogs(level="INFO") as captured:
+                _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    ["cluster1_A_Organism A"],
+                )
+
+            self.assertEqual(matrix_to_accession["cluster1_A_Organism A"], "A")
+            self.assertIn("raw composite alias", "\n".join(captured.output))
+
+    def test_load_and_check_tables_logs_info_for_sanitised_composite_match(self) -> None:
+        """Log INFO when a matrix name matches the sanitised composite alias."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.csv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_csv(
+                metadata_path,
+                [self.metadata_row("A", "cluster.1", "Organism A")],
+            )
+            matrix_label = sanitise("cluster.1_A_Organism A")
+
+            with self.assertLogs(level="INFO") as captured:
+                _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    [matrix_label],
+                )
+
+            self.assertEqual(matrix_to_accession[matrix_label], "A")
+            self.assertIn("sanitised composite alias", "\n".join(captured.output))
+
+    def test_load_and_check_tables_rejects_conflicting_sanitised_aliases(self) -> None:
+        """Reject metadata rows that collide after sanitisation."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.csv"
+            for accession in ("A.1", "A_1"):
+                genome_path = temp_path / f"{accession}.fna"
+                write_text(genome_path, f">{accession}\nATGC\n")
+            write_text(
+                input_list_path,
+                "\n".join(
+                    [
+                        "accession\tpath",
+                        f"A.1\t{temp_path / 'A.1.fna'}",
+                        f"A_1\t{temp_path / 'A_1.fna'}",
+                    ]
+                )
+                + "\n",
+            )
+            self.write_metadata_csv(
+                metadata_path,
+                [
+                    self.metadata_row("A.1", "cluster.1", "Organism A"),
+                    self.metadata_row("A_1", "cluster_1", "Organism A"),
+                ],
+            )
+
+            with self.assertRaises(SystemExit):
+                load_and_check_tables(input_list_path, metadata_path, ["A"])
+
+    def test_load_and_check_tables_rejects_composite_match_without_cluster_id(self) -> None:
+        """Reject composite fallback when Cluster_ID is missing for that metadata row."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.csv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_csv(
+                metadata_path,
+                [self.metadata_row("A", "", "Organism_A")],
+            )
+
+            with self.assertRaises(SystemExit):
+                load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    ["cluster1_A_Organism_A"],
+                )
+
     def test_normalise_threshold_accepts_fraction_and_percent(self) -> None:
         """Accept both supported threshold forms."""
         self.assertAlmostEqual(normalise_threshold("0.9"), 0.9)
@@ -227,37 +454,21 @@ class ClusterFastAAITests(unittest.TestCase):
                 input_list_path,
                 "\n".join(
                     [
-                        "Accession\tAssembly_Name\tOrganism_Name\tPath",
-                        f"A\tA_asm\tOrganism_A\t{genome_paths['A']}",
-                        f"B\tB_asm\tOrganism_B\t{genome_paths['B']}",
-                        f"C\tC_asm\tOrganism_C\t{genome_paths['C']}",
-                        f"D\tD_asm\tOrganism_D\t{genome_paths['D']}",
+                        "accession\tpath",
+                        f"A\t{genome_paths['A']}",
+                        f"B\t{genome_paths['B']}",
+                        f"C\t{genome_paths['C']}",
+                        f"D\t{genome_paths['D']}",
                     ]
                 )
                 + "\n",
             )
-
-            with metadata_path.open("w", encoding="ascii", newline="") as handle:
-                fieldnames = [
-                    "Accession",
-                    "Assembly_Name",
-                    "Organism_Name",
-                    "Gcode",
-                    "N50",
-                    "Assembly_Level",
-                    "BUSCO_bacillota_odb12",
-                    "Scaffolds",
-                    "Genome_Size",
-                    "Completeness_gcode4",
-                    "Completeness_gcode11",
-                    "Contamination_gcode4",
-                    "Contamination_gcode11",
-                ]
-                writer = csv.DictWriter(handle, fieldnames=fieldnames)
-                writer.writeheader()
-                rows = [
+            self.write_metadata_csv(
+                metadata_path,
+                [
                     {
                         "Accession": "A",
+                        "Cluster_ID": "cluster1",
                         "Assembly_Name": "A_asm",
                         "Organism_Name": "Organism_A",
                         "Gcode": "11",
@@ -273,6 +484,7 @@ class ClusterFastAAITests(unittest.TestCase):
                     },
                     {
                         "Accession": "B",
+                        "Cluster_ID": "cluster1",
                         "Assembly_Name": "B_asm",
                         "Organism_Name": "Organism_B",
                         "Gcode": "11",
@@ -288,6 +500,7 @@ class ClusterFastAAITests(unittest.TestCase):
                     },
                     {
                         "Accession": "C",
+                        "Cluster_ID": "cluster1",
                         "Assembly_Name": "C_asm",
                         "Organism_Name": "Organism_C",
                         "Gcode": "11",
@@ -303,6 +516,7 @@ class ClusterFastAAITests(unittest.TestCase):
                     },
                     {
                         "Accession": "D",
+                        "Cluster_ID": "cluster2",
                         "Assembly_Name": "D_asm",
                         "Organism_Name": "Organism_D",
                         "Gcode": "11",
@@ -316,8 +530,8 @@ class ClusterFastAAITests(unittest.TestCase):
                         "Contamination_gcode4": "1.5",
                         "Contamination_gcode11": "1.5",
                     },
-                ]
-                writer.writerows(rows)
+                ],
+            )
 
             args = argparse.Namespace(
                 ani_matrix=matrix_path,
@@ -372,50 +586,50 @@ class ClusterFastAAITests(unittest.TestCase):
                 input_list_path,
                 "\n".join(
                     [
-                        "Accession\tAssembly_Name\tOrganism_Name\tPath",
-                        f"A\tA_asm\tOrganism_A\t{temp_path / 'A.fna'}",
-                        f"B\tB_asm\tOrganism_B\t{temp_path / 'B.fna'}",
+                        "accession\tpath",
+                        f"A\t{temp_path / 'A.fna'}",
+                        f"B\t{temp_path / 'B.fna'}",
                     ]
                 )
                 + "\n",
             )
-
-            with metadata_path.open("w", encoding="ascii", newline="") as handle:
-                fieldnames = [
-                    "Accession",
-                    "Assembly_Name",
-                    "Organism_Name",
-                    "Gcode",
-                    "N50",
-                    "Assembly_Level",
-                    "BUSCO_bacillota_odb12",
-                    "Scaffolds",
-                    "Genome_Size",
-                    "Completeness_gcode4",
-                    "Completeness_gcode11",
-                    "Contamination_gcode4",
-                    "Contamination_gcode11",
-                ]
-                writer = csv.DictWriter(handle, fieldnames=fieldnames)
-                writer.writeheader()
-                for accession in ("A", "B"):
-                    writer.writerow(
-                        {
-                            "Accession": accession,
-                            "Assembly_Name": f"{accession}_asm",
-                            "Organism_Name": f"Organism_{accession}",
-                            "Gcode": "11",
-                            "N50": "100000",
-                            "Assembly_Level": "Scaffold",
-                            "BUSCO_bacillota_odb12": BUSCO,
-                            "Scaffolds": "10",
-                            "Genome_Size": "4000000",
-                            "Completeness_gcode4": "98.0",
-                            "Completeness_gcode11": "98.0",
-                            "Contamination_gcode4": "0.5",
-                            "Contamination_gcode11": "0.5",
-                        }
-                    )
+            self.write_metadata_csv(
+                metadata_path,
+                [
+                    {
+                        "Accession": "A",
+                        "Cluster_ID": "cluster1",
+                        "Assembly_Name": "A_asm",
+                        "Organism_Name": "Organism_A",
+                        "Gcode": "11",
+                        "N50": "100000",
+                        "Assembly_Level": "Scaffold",
+                        "BUSCO_bacillota_odb12": BUSCO,
+                        "Scaffolds": "10",
+                        "Genome_Size": "4000000",
+                        "Completeness_gcode4": "98.0",
+                        "Completeness_gcode11": "98.0",
+                        "Contamination_gcode4": "0.5",
+                        "Contamination_gcode11": "0.5",
+                    },
+                    {
+                        "Accession": "B",
+                        "Cluster_ID": "cluster1",
+                        "Assembly_Name": "B_asm",
+                        "Organism_Name": "Organism_B",
+                        "Gcode": "11",
+                        "N50": "100000",
+                        "Assembly_Level": "Scaffold",
+                        "BUSCO_bacillota_odb12": BUSCO,
+                        "Scaffolds": "10",
+                        "Genome_Size": "4000000",
+                        "Completeness_gcode4": "98.0",
+                        "Completeness_gcode11": "98.0",
+                        "Contamination_gcode4": "0.5",
+                        "Contamination_gcode11": "0.5",
+                    },
+                ],
+            )
 
             args = argparse.Namespace(
                 ani_matrix=matrix_path,
@@ -454,7 +668,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 + "\n",
             )
 
-            input_lines = ["Accession\tAssembly_Name\tOrganism_Name\tPath"]
+            input_lines = ["accession\tpath"]
             metadata_rows = []
             for accession, n50, level in (
                 ("A", "100000", "Scaffold"),
@@ -463,12 +677,11 @@ class ClusterFastAAITests(unittest.TestCase):
             ):
                 genome_path = temp_path / f"{accession}.fna"
                 write_text(genome_path, f">{accession}\nATGC\n")
-                input_lines.append(
-                    f"{accession}\t{accession}_asm\tOrganism_{accession}\t{genome_path}"
-                )
+                input_lines.append(f"{accession}\t{genome_path}")
                 metadata_rows.append(
                     {
                         "Accession": accession,
+                        "Cluster_ID": "cluster1" if accession in ("A", "B") else "cluster2",
                         "Assembly_Name": f"{accession}_asm",
                         "Organism_Name": f"Organism_{accession}",
                         "Gcode": "11",
@@ -485,12 +698,7 @@ class ClusterFastAAITests(unittest.TestCase):
                 )
 
             write_text(input_list_path, "\n".join(input_lines) + "\n")
-
-            with metadata_path.open("w", encoding="ascii", newline="") as handle:
-                fieldnames = list(metadata_rows[0].keys())
-                writer = csv.DictWriter(handle, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(metadata_rows)
+            self.write_metadata_csv(metadata_path, metadata_rows)
 
             args = argparse.Namespace(
                 ani_matrix=matrix_path,
