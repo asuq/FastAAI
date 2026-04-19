@@ -2826,21 +2826,19 @@ def one_work(placeholder):
 				aai_ests[no_hit] = 0
 				print(*aai_ests, sep = "\t", file = outwriter)
 		
-		prog_queue.put(q)
-	
-	prog_queue.put("done")
+	result_file = None
 	if style == "matrix":
 		if store:
 			if len(holder) == 0:
-				return None
+				return (len(query_grouping), None)
 			hold_together = np.vstack(holder)
 			np.savetxt(group_id, hold_together, delimiter = "\t", fmt='%4d')
+			result_file = group_id
 		else:
 			outwriter.close()
-			if len(query_grouping) == 0:
-				return None
-		return group_id
-	return None
+			if len(query_grouping) > 0:
+				result_file = group_id
+	return (len(query_grouping), result_file)
 
 def two_work(i):
 	if store:
@@ -2893,10 +2891,6 @@ def on_disk_init(query_database_path, target_database_path, num_tgt, query_queue
 	#Suppress div by zero warning - it's handled.
 	np.seterr(divide='ignore')
 	
-	if style == "matrix":
-		global outwriter
-		outwriter = open(group_id, "w")
-		
 	global prog_queue
 	prog_queue = progress_queue
 	
@@ -2914,6 +2908,7 @@ def on_disk_init(query_database_path, target_database_path, num_tgt, query_queue
 	
 def on_disk_work_one(placeholder):
 	curs = database.cursor()
+	output_rows = []
 	for q in query_grouping:
 		results = []
 		qname = _qnames[q]
@@ -3022,17 +3017,17 @@ def on_disk_work_one(placeholder):
 		else:
 			aai_ests = numpy_kaai_to_aai_just_nums(jaccard_averages, as_float = True)
 			aai_ests[no_hit] = 0
-			print(*aai_ests, sep = "\t", file = outwriter)
-		
-		prog_queue.put(q)
+			output_rows.append("\t".join(str(value) for value in aai_ests))
 		
 	curs.close()
-	prog_queue.put("done")
 	if style == "matrix":
-		outwriter.close()
 		if len(query_grouping) == 0:
-			return None
-		return group_id
+			return (len(query_grouping), None)
+		with open(group_id, "w") as outwriter:
+			if len(output_rows) > 0:
+				outwriter.write("\n".join(output_rows) + "\n")
+		return (len(query_grouping), group_id)
+	return (len(query_grouping), None)
 	
 def on_disk_work_two(i):
 	outwriter.close()
@@ -3226,10 +3221,6 @@ class db_db_remake:
 			query_groups.append(np.arange(grouping[0], grouping[1]))
 		self.num_result_groups = len(query_groups)
 		
-		result_queue = multiprocessing.Queue()
-		remaining_procs = self.threads
-		still_going = True
-		
 		pool = multiprocessing.Pool(self.threads, initializer = one_init, 
 		initargs = (ql, #ql 
 					tl, #tl
@@ -3241,34 +3232,30 @@ class db_db_remake:
 					self.style, #sty
 					self.output_base, #output_dir
 					self.store_mat, #store_results
-					result_queue, #progress_queue
+					None, #progress_queue
 					self.query_names, #qnames
 					self.target_names, #tnames
 					tempdir_path,)) #temp_dir
 		
 		some_results = pool.imap(one_work, query_groups)
 		
-		while still_going:
-			item = result_queue.get() 
-			if item == "done":
-				remaining_procs -= 1
-				if remaining_procs == 0:
-					still_going = False
-			else:
-				if self.verbose:
-					tracker.update()
-				else:
-					pass
-		
 		if self.style == "matrix":
-			result_files = [result for result in some_results if result is not None]
+			result_files = []
+			for processed_queries, result_file in some_results:
+				for i in range(0, processed_queries):
+					if self.verbose:
+						tracker.update()
+				if result_file is not None:
+					result_files.append(result_file)
 			
 			pool.close()
 		
 			self.write_mat_from_files(result_files, tempdir_path)
 		else:
-			for result in some_results:
-				pass
+			for processed_queries, result_file in some_results:
+				for i in range(0, processed_queries):
+					if self.verbose:
+						tracker.update()
 			pool.close()
 
 	#This needs to be implemented from existing code.
@@ -3277,10 +3264,6 @@ class db_db_remake:
 		if self.style == "matrix":
 			self.store_mat = False
 			
-		result_queue = multiprocessing.Queue()
-		remaining_procs = self.threads
-		still_going = True
-		
 		if self.verbose:
 			tracker = progress_tracker(total = self.num_queries, message = "Calculating AAI")
 		else:
@@ -3303,7 +3286,7 @@ class db_db_remake:
 					self.do_sd, #sd
 					self.style, #sty
 					self.output_base, #output_dir
-					result_queue, #progress_queue
+					None, #progress_queue
 					self.query_names, #qnames
 					self.target_names, #tnames
 					self.valids, #valids
@@ -3311,23 +3294,19 @@ class db_db_remake:
 		
 		some_results = pool.imap(on_disk_work_one, query_groups)
 		
-		while still_going:
-			item = result_queue.get() 
-			if item == "done":
-				remaining_procs -= 1
-				if remaining_procs == 0:
-					still_going = False
-			else:
-				if self.verbose:
-					tracker.update()
-				else:
-					pass
-		
 		if self.style == "matrix":
-			result_files = [result for result in some_results if result is not None]
+			result_files = []
+			for processed_queries, result_file in some_results:
+				for i in range(0, processed_queries):
+					if self.verbose:
+						tracker.update()
+				if result_file is not None:
+					result_files.append(result_file)
 		else:
-			for result in some_results:
-				pass
+			for processed_queries, result_file in some_results:
+				for i in range(0, processed_queries):
+					if self.verbose:
+						tracker.update()
 			
 		pool.close()
 			
