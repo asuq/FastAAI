@@ -2730,29 +2730,19 @@ def parse_accession(acc):
 	return([acc, out_file])
 			
 #all of this is exclusive to the in-mem approach for db db query
-def one_init(ql, tl, num_tgt, qgak_queue, tgak, tpres, sd, sty, output_dir, store_results, progress_queue, qnames, tnames, temp_dir):
+def one_init(ql, tl, num_tgt, tgak, tpres, sd, sty, output_dir, store_results, progress_queue, qnames, tnames, temp_dir):
 	global _ql
 	_ql = ql
 	global _tl
 	_tl = tl
 	global _nt
 	_nt = num_tgt
-	
-	qgak_data = qgak_queue.get()
-	
+
 	global out_base
 	out_base = output_dir
-	
-	global group_id
-	group_id = os.path.normpath(temp_dir + "/partial_results_group_" + str(qgak_data[0])+ ".txt")
-	
-	global _qgak
-	_qgak = qgak_data[1]
-	
-	global query_grouping
-	query_grouping = qgak_data[2]
-	
-	qgak_data = None
+
+	global temp_path
+	temp_path = temp_dir
 	
 	global _tgak
 	_tgak = tgak
@@ -2772,12 +2762,6 @@ def one_init(ql, tl, num_tgt, qgak_queue, tgak, tpres, sd, sty, output_dir, stor
 	
 	global store
 	store = store_results
-	if store:
-		global holder
-		holder = []
-	else:
-		global outwriter
-		outwriter = open(group_id, "w")
 		
 	global prog_queue
 	prog_queue = progress_queue
@@ -2788,110 +2772,84 @@ def one_init(ql, tl, num_tgt, qgak_queue, tgak, tpres, sd, sty, output_dir, stor
 	global _tnames
 	_tnames = tnames
 	
-def one_work(placeholder):	
-	for q in query_grouping:
-		results = []
-		#We also need to count the accs in the query genome, but which are not part of the inner join.
-		for acc in _qgak[q][0]:
-			if acc in _ql[q]:
-				#the bincount is intersections.
-				these_intersections = np.bincount(np.concatenate(_tl[acc][_ql[q][acc]]), minlength = _nt)
-			else:
-				#there are no intersections even though this accession is shared with at least one target
-				#number of intersects is all zeros
-				these_intersections = np.zeros(_nt, dtype = np.int32)
-			
-			#Append the counts or zeros, either way.
-			results.append(these_intersections)
-				
-		results = np.vstack(results)
-		
-		target_kmer_counts = _tgak[_qgak[q][0], :]
-		
-		#unions = size(A) + size(B) - size(intersections(A, B)) 
-		#unions = target_kmer_counts + query_kmers_by_acc - intersections
-		unions = np.subtract(np.add(target_kmer_counts, _qgak[q][1][:, None]), results)
-		
-		#These are now jaccards, not #intersections
-		results = np.divide(results, unions)
-		
-		shared_acc_counts = np.sum(_tpres[_qgak[q][0], :], axis = 0)
-		
-		no_hit = np.where(shared_acc_counts == 0)
-		
-		jaccard_averages = np.divide(np.sum(results, axis = 0), shared_acc_counts)
+def one_work(task):	
+	task_id, local_qgak, query_grouping = task
+	group_id = os.path.normpath(temp_path + "/partial_results_group_" + str(task_id)+ ".txt")
+	holder = []
+	outwriter = None
+	if style == "matrix" and not store:
+		outwriter = open(group_id, "w")
 
-		#Skip SD if output is matrix
-		if style == "tsv":
-			aai_ests = numpy_kaai_to_aai(jaccard_averages)
+	try:
+		for q in query_grouping:
+			results = []
+			for acc in local_qgak[q][0]:
+				if acc in _ql[q]:
+					these_intersections = np.bincount(np.concatenate(_tl[acc][_ql[q][acc]]), minlength = _nt)
+				else:
+					these_intersections = np.zeros(_nt, dtype = np.int32)
+				results.append(these_intersections)
 
-			if do_sd:
-				#find diffs from means; this includes indicies corresponding to unshared SCPs that should not be included. 
-				results = results - jaccard_averages
-				
-				#fix those corresponding indicies to not contribute to the final SD.
-				results[np.logical_not(_tpres[_qgak[q][0], :])] = 0
-				#results[np.nonzero(has_accs == 0)] = 0
-				
-				#Square them; 0^2 = 0, so we don't have to think about the fixed indices any more.
-				results = np.square(results)
-				#Sum squares and divide by shared acc. count, the sqrt to get SD.
-				jaccard_SDs = np.sqrt(np.divide(np.sum(results, axis = 0), shared_acc_counts))
-				jaccard_SDs = np.round(jaccard_SDs, 4).astype(str)
-				
+			results = np.vstack(results)
+			target_kmer_counts = _tgak[local_qgak[q][0], :]
+			unions = np.subtract(np.add(target_kmer_counts, local_qgak[q][1][:, None]), results)
+			results = np.divide(results, unions)
+			shared_acc_counts = np.sum(_tpres[local_qgak[q][0], :], axis = 0)
 			no_hit = np.where(shared_acc_counts == 0)
-			
-			#addtl.shape[0] is the query acc count
-			possible_hits = np.minimum(_qgak[q][0].shape[0], _tct).astype(str)
-			
-			jaccard_averages = np.round(jaccard_averages, 4).astype(str)
-			shared_acc_counts = shared_acc_counts.astype(str)
-			
-			jaccard_averages[no_hit] = "N/A"
-			aai_ests[no_hit] = "N/A"
-			shared_acc_counts[no_hit] = "N/A"
-			possible_hits[no_hit] = "N/A"
+			jaccard_averages = np.divide(np.sum(results, axis = 0), shared_acc_counts)
+
+			if style == "tsv":
+				aai_ests = numpy_kaai_to_aai(jaccard_averages)
+
+				if do_sd:
+					results = results - jaccard_averages
+					results[np.logical_not(_tpres[local_qgak[q][0], :])] = 0
+					results = np.square(results)
+					jaccard_SDs = np.sqrt(np.divide(np.sum(results, axis = 0), shared_acc_counts))
+					jaccard_SDs = np.round(jaccard_SDs, 4).astype(str)
 				
-			qname = _qnames[q]
+				possible_hits = np.minimum(local_qgak[q][0].shape[0], _tct).astype(str)
+				jaccard_averages = np.round(jaccard_averages, 4).astype(str)
+				shared_acc_counts = shared_acc_counts.astype(str)
+				jaccard_averages[no_hit] = "N/A"
+				aai_ests[no_hit] = "N/A"
+				shared_acc_counts[no_hit] = "N/A"
+				possible_hits[no_hit] = "N/A"
 				
-			output_name = os.path.normpath(out_base + "/results/"+qname+"_results.txt")
-		
-			out = open(output_name, "w")
-			out.write("query\ttarget\tavg_jacc_sim\tjacc_SD\tnum_shared_SCPs\tposs_shared_SCPs\tAAI_estimate\n")
-			if do_sd:
-				jaccard_SDs[no_hit] = "N/A"
-				for i in range(0, len(aai_ests)):
-					out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+jaccard_SDs[i]+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
-			else:			
-				for i in range(0, len(aai_ests)):
-					out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+"N/A"+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
-			out.close()
-			
-			
-		else:
-			if store:
-				aai_ests = numpy_kaai_to_aai_just_nums(jaccard_averages, as_float = False)
-				aai_ests[no_hit] = 0
-				#add zeros at misses/NAs
-				holder.append(aai_ests)
+				qname = _qnames[q]
+				output_name = os.path.normpath(out_base + "/results/"+qname+"_results.txt")
+				out = open(output_name, "w")
+				out.write("query\ttarget\tavg_jacc_sim\tjacc_SD\tnum_shared_SCPs\tposs_shared_SCPs\tAAI_estimate\n")
+				if do_sd:
+					jaccard_SDs[no_hit] = "N/A"
+					for i in range(0, len(aai_ests)):
+						out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+jaccard_SDs[i]+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
+				else:			
+					for i in range(0, len(aai_ests)):
+						out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+"N/A"+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
+				out.close()
 			else:
-				aai_ests = numpy_kaai_to_aai_just_nums(jaccard_averages, as_float = True)
+				aai_ests = numpy_kaai_to_aai_just_nums(jaccard_averages, as_float = not store)
 				aai_ests[no_hit] = 0
-				print(*aai_ests, sep = "\t", file = outwriter)
-		
-	result_file = None
-	if style == "matrix":
-		if store:
-			if len(holder) == 0:
-				return (len(query_grouping), None)
-			hold_together = np.vstack(holder)
-			np.savetxt(group_id, hold_together, delimiter = "\t", fmt='%4d')
-			result_file = group_id
-		else:
-			outwriter.close()
-			if len(query_grouping) > 0:
+				if store:
+					holder.append(aai_ests)
+				else:
+					print(*aai_ests, sep = "\t", file = outwriter)
+
+		result_file = None
+		if style == "matrix":
+			if store:
+				if len(holder) == 0:
+					return (len(query_grouping), None)
+				hold_together = np.vstack(holder)
+				np.savetxt(group_id, hold_together, delimiter = "\t", fmt='%4d')
 				result_file = group_id
-	return (len(query_grouping), result_file)
+			elif len(query_grouping) > 0:
+				result_file = group_id
+		return (len(query_grouping), result_file)
+	finally:
+		if outwriter is not None:
+			outwriter.close()
 
 def two_work(i):
 	if store:
@@ -2902,7 +2860,7 @@ def two_work(i):
 		
 	return group_id
 	
-def on_disk_init(query_database_path, target_database_path, num_tgt, query_queue, target_gak, tpres, sd, sty, output_dir, progress_queue, qnames, tnames, valids, temp_dir):
+def on_disk_init(query_database_path, target_database_path, num_tgt, target_gak, tpres, sd, sty, output_dir, progress_queue, qnames, tnames, valids, temp_dir):
 	global database
 	database = sqlite3.connect(":memory:")
 	
@@ -2913,20 +2871,12 @@ def on_disk_init(query_database_path, target_database_path, num_tgt, query_queue
 	
 	global _nt
 	_nt = num_tgt
-	
-	qgak_data = query_queue.get()
-	
+
 	global out_base
 	out_base = output_dir
-	
-	global group_id
-	group_id = os.path.normpath(temp_dir + "/partial_results_group_" + str(qgak_data[0])+ ".txt")
-	
-	global _qgak
-	_qgak = qgak_data[1]
-	
-	global query_grouping
-	query_grouping = qgak_data[2]
+
+	global temp_path
+	temp_path = temp_dir
 	
 	global _tgak
 	_tgak = target_gak
@@ -2959,35 +2909,29 @@ def on_disk_init(query_database_path, target_database_path, num_tgt, query_queue
 	global _valids
 	_valids = valids
 	
-def on_disk_work_one(placeholder):
+def on_disk_work_one(task):
+	task_id, local_qgak, query_grouping = task
+	group_id = os.path.normpath(temp_path + "/partial_results_group_" + str(task_id)+ ".txt")
 	curs = database.cursor()
 	output_rows = []
 	for q in query_grouping:
 		results = []
 		qname = _qnames[q]
-		for acc in _qgak[q][0]:
+		for acc in local_qgak[q][0]:
 			acc_name = acc_indexer[acc]
-				
 			if acc_name in _valids:
-				
 				one = curs.execute("SELECT kmers FROM queries."+acc_name+"_genomes WHERE genome=?", (str(q),)).fetchone()[0]
 				one = np.frombuffer(one, dtype = np.int32)
 				
 				if one.shape[0] > 998:
-					#Each kmer needs to be a tuple.
 					these_kmers = [(int(kmer),) for kmer in one]
-				
 					temp_name = build_temp_table_name(qname, acc_name)
-					
 					curs.execute("CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)")
 					insert_table = "INSERT INTO " + temp_name + " VALUES (?)"
 					curs.executemany(insert_table, these_kmers)
-					
 					join_and_select_sql = "SELECT genomes FROM " + temp_name + " INNER JOIN targets." + acc_name + " ON "+ temp_name+".kmer = targets." + acc_name + ".kmer;"
-					
 					matches = curs.execute(join_and_select_sql).fetchall()
 				else:
-					#kmers must be a list, not a tuple.
 					these_kmers = [int(kmer) for kmer in one]
 					select = "SELECT genomes FROM targets." + acc_name + " WHERE kmer IN ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
 					matches = curs.execute(select, these_kmers).fetchall()
@@ -2996,65 +2940,39 @@ def on_disk_work_one(placeholder):
 				for row in matches:
 					set.append(row[0])
 				set = b''.join(set)
-					
 				matches = None
 				these_intersections = np.bincount(np.frombuffer(set, dtype = np.int32), minlength = _nt)
 				set = None
 				results.append(these_intersections)
-				
 			else:
 				results.append(np.zeros(_nt, dtype=np.int32))
-			
+		
 		results = np.vstack(results)
-		
-		target_kmer_counts = _tgak[_qgak[q][0], :]
-		
-		#unions = size(A) + size(B) - size(intersections(A, B)) 
-		#unions = target_kmer_counts + query_kmers_by_acc - intersections
-		unions = np.subtract(np.add(target_kmer_counts, _qgak[q][1][:, None]), results)
-		
-		#These are now jaccards, not #intersections
+		target_kmer_counts = _tgak[local_qgak[q][0], :]
+		unions = np.subtract(np.add(target_kmer_counts, local_qgak[q][1][:, None]), results)
 		results = np.divide(results, unions)
-
-		shared_acc_counts = np.sum(_tpres[_qgak[q][0], :], axis = 0)
-		
+		shared_acc_counts = np.sum(_tpres[local_qgak[q][0], :], axis = 0)
 		no_hit = np.where(shared_acc_counts == 0)
-		
 		jaccard_averages = np.divide(np.sum(results, axis = 0), shared_acc_counts)
 		
-		#Skip SD if output is matrix
 		if style == "tsv":
 			aai_ests = numpy_kaai_to_aai(jaccard_averages)
 			
 			if do_sd:
-				#find diffs from means; this includes indicies corresponding to unshared SCPs that should not be included. 
 				results = results - jaccard_averages
-				
-				#fix those corresponding indicies to not contribute to the final SD.
-				results[np.logical_not(_tpres[_qgak[q][0], :])] = 0
-				#results[np.nonzero(has_accs == 0)] = 0
-				
-				#Square them; 0^2 = 0, so we don't have to think about the fixed indices any more.
+				results[np.logical_not(_tpres[local_qgak[q][0], :])] = 0
 				results = np.square(results)
-				#Sum squares and divide by shared acc. count, the sqrt to get SD.
 				jaccard_SDs = np.sqrt(np.divide(np.sum(results, axis = 0), shared_acc_counts))
 				jaccard_SDs = np.round(jaccard_SDs, 4).astype(str)
-				
-			no_hit = np.where(shared_acc_counts == 0)
 			
-			#_qgak[q][0] is the query acc count
-			possible_hits = np.minimum(_qgak[q][0].shape[0], _tct).astype(str)
-			
+			possible_hits = np.minimum(local_qgak[q][0].shape[0], _tct).astype(str)
 			jaccard_averages = np.round(jaccard_averages, 4).astype(str)
 			shared_acc_counts = shared_acc_counts.astype(str)
-			
 			jaccard_averages[no_hit] = "N/A"
 			aai_ests[no_hit] = "N/A"
 			shared_acc_counts[no_hit] = "N/A"
 			possible_hits[no_hit] = "N/A"
-			
 			output_name = os.path.normpath(out_base + "/results/"+qname+"_results.txt")
-		
 			out = open(output_name, "w")
 			out.write("query\ttarget\tavg_jacc_sim\tjacc_SD\tnum_shared_SCPs\tposs_shared_SCPs\tAAI_estimate\n")
 			if do_sd:
@@ -3065,12 +2983,11 @@ def on_disk_work_one(placeholder):
 				for i in range(0, len(aai_ests)):
 					out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+"N/A"+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
 			out.close()
-			
 		else:
 			aai_ests = numpy_kaai_to_aai_just_nums(jaccard_averages, as_float = True)
 			aai_ests[no_hit] = 0
 			output_rows.append("\t".join(str(value) for value in aai_ests))
-		
+	
 	curs.close()
 	if style == "matrix":
 		if len(query_grouping) == 0:
@@ -3195,7 +3112,7 @@ class db_db_remake:
 			self.query_gak[genome] = (np.array(self.query_gak[genome][0], dtype = np.int32), np.array(self.query_gak[genome][1], dtype = np.int32))
 		
 		#Split these into ordered groups - this makes joining results at the end easier.
-		qgak_queue = multiprocessing.Queue()
+		query_group_data = []
 		groupings = split_seq_indices(np.arange(self.num_queries), self.threads)
 		group_id = 0
 		for group in groupings:
@@ -3203,12 +3120,11 @@ class db_db_remake:
 			for i in range(group[0], group[1]):
 				next_set[i] = self.query_gak[i]
 				self.query_gak[i] = None
-			#this ensures that the selection of qgak and the query index range match
-			qgak_queue.put((group_id, next_set, np.arange(group[0], group[1]),))
+			query_group_data.append((group_id, next_set, np.arange(group[0], group[1]),))
 			group_id += 1
 		
-		self.query_gak = qgak_queue
-		qgak_queue = None
+		self.query_gak = query_group_data
+		query_group_data = None
 		
 		#tgt gak is organized by accession first, then genome
 		self.target_gak = np.zeros(shape = (122, self.num_targets), dtype = np.int32)
@@ -3268,16 +3184,12 @@ class db_db_remake:
 		else:
 			print("\nCalculating AAI.")
 		
-		query_groups = []
-		for grouping in split_seq_indices(np.arange(self.num_queries), self.threads):
-			query_groups.append(np.arange(grouping[0], grouping[1]))
-		self.num_result_groups = len(query_groups)
+		self.num_result_groups = len(self.query_gak)
 		
 		pool = multiprocessing.Pool(self.threads, initializer = one_init, 
 		initargs = (ql, #ql 
 					tl, #tl
 					self.num_targets, #num_tgt
-					self.query_gak, #qgak_queue
 					self.target_gak, #tgak
 					self.target_presence, #tpres
 					self.do_sd, #sd
@@ -3289,7 +3201,7 @@ class db_db_remake:
 					self.target_names, #tnames
 					tempdir_path,)) #temp_dir
 		
-		some_results = pool.imap(one_work, query_groups)
+		some_results = pool.imap(one_work, self.query_gak)
 		
 		if self.style == "matrix":
 			result_files = []
@@ -3321,10 +3233,7 @@ class db_db_remake:
 		else:
 			print("\nCalculating AAI")
 		
-		query_groups = []
-		for grouping in split_seq_indices(np.arange(self.num_queries), self.threads):
-			query_groups.append(np.arange(grouping[0], grouping[1]))
-		self.num_result_groups = len(query_groups)
+		self.num_result_groups = len(self.query_gak)
 		
 		#query_database_path, target_database_path, num_tgt, query_queue, target_gak, tpres, sd, 
 		#sty, output_dir, progress_queue, qnames, tnames, valids, temp_dir
@@ -3332,7 +3241,6 @@ class db_db_remake:
 		initargs = (self.q, #query_database_path
 					self.t, #target_database_path
 					self.num_targets, #num_tgt
-					self.query_gak, #query_queue
 					self.target_gak, #target_gak
 					self.target_presence, #tpres
 					self.do_sd, #sd
@@ -3344,7 +3252,7 @@ class db_db_remake:
 					self.valids, #valids
 					tempdir_path,)) #temp_dir
 		
-		some_results = pool.imap(on_disk_work_one, query_groups)
+		some_results = pool.imap(on_disk_work_one, self.query_gak)
 		
 		if self.style == "matrix":
 			result_files = []
