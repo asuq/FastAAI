@@ -10,11 +10,10 @@ Core pipeline
 1) Read matrix: parse a FastAAI full tab-separated matrix of FastAAI-coded
    numeric AAI values; enforce strict structure.
 2) Validate tables:
-   - input_list.tsv: Accession, Path (1:1, paths must exist).
+   - input_list.tsv: accession, path (1:1, paths must exist).
    - metadata.csv : required fields present & parseable (see REQUIRED_NONEMPTY_COLS).
-   - Name identity: every matrix name is present in both TSV and CSV (hard fail).
-   - Cross-file equality for Assembly_Name / Organism_Name, allowing space<->underscore
-     normalization (differences beyond that -> hard fail).
+   - Name identity: every matrix name must resolve to metadata by plain accession or
+     composite alias.
 3) Cluster: complete-linkage on distance d = 1 - ANI/100; cut at (1 - threshold)
    so all pairs in a cluster have ANI >= threshold and non-NA (post-checked).
 4) Score candidates, per cluster, with channel-specific transforms,
@@ -47,8 +46,8 @@ Core pipeline
      (Organism_Name has whitespace collapsed to underscores).
 
 Strict validation:
-  - FastAAI matrix names == Accession set in matrix (hard fail if any matrix name missing
-    in TSV/CSV).
+  - FastAAI matrix names must resolve to metadata accessions using plain accession or
+    composite alias matching.
   - Matrix must be square with 'query_genome' in the first header column.
   - Row names must match header names in order.
   - Matrix values must be numeric FastAAI-coded AAI values in [0,100] and symmetric
@@ -59,7 +58,7 @@ Strict validation:
   - Assembly_Level normalized case-insensitively to exactly:
         {'Complete Genome','Chromosome','Scaffold','Contig'} (no synonyms).
   - Required CSV fields must be present & parseable; missing/unparsable => hard fail.
-  - Accession <-> Path must be 1:1 and Path must exist on disk.
+  - accession <-> path must be 1:1 and path must exist on disk.
 
 Threading:
   - --threads is an upper bound; actual worker count is capped by hardware/scheduler limits
@@ -117,7 +116,7 @@ def parse_args() -> argparse.Namespace:
         "--input-list",
         required=True,
         type=Path,
-        help="TSV with: Accession, Assembly_Name, Organism_Name, Path.",
+        help="TSV with lowercase headers: accession, path.",
     )
     p.add_argument(
         "-m",
@@ -339,7 +338,6 @@ def set_thread_envs(n_threads: int) -> None:
 # Parsing helpers and types
 # --------------------------------------------------------------------------- #
 REQUIRED_NONEMPTY_COLS: set[str] = {
-    "Accession",
     "Gcode",
     "N50",
     "Assembly_Level",
@@ -418,11 +416,128 @@ def parse_busco(busco_str: str, acc: str) -> tuple[float, float]:
     return float(m.group("C")), float(m.group("M"))
 
 
-def _canon_space_underscore(s: str) -> str:
+def sanitise(text: str) -> str:
     """
-    Normalize by treating sequences of spaces/underscores as a single space.
+    Apply the same sanitisation logic as rename_leaf_name.py.
     """
-    return re.sub(r"[\s_]+", " ", s.strip())
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
+    text = text.replace(".", "_")
+    text = re.sub(r"_+", "_", text)
+    text = text.strip("_")
+    return text
+
+
+def resolve_metadata_accession_columns(columns: list[str]) -> list[str]:
+    """
+    Determine which metadata accession header names are available.
+    """
+    accession_columns = [column for column in ("accession", "Accession") if column in columns]
+    if not accession_columns:
+        die("metadata CSV missing accession column. Expected 'accession' or 'Accession'.")
+    return accession_columns
+
+
+def resolve_metadata_accession_value(
+    row: dict[str, str],
+    accession_columns: list[str],
+    row_number: int,
+) -> str:
+    """
+    Resolve a metadata accession value, supporting both header cases.
+    """
+    values = []
+    for column in accession_columns:
+        value = str(row.get(column, "")).strip()
+        if value:
+            values.append(value)
+    unique_values = sorted(set(values))
+    if len(unique_values) > 1:
+        die(
+            "metadata CSV accession columns disagree at row "
+            f"{row_number}: {unique_values}"
+        )
+    if not unique_values:
+        die(f"metadata CSV accession is empty at row {row_number}")
+    accession = unique_values[0]
+    if accession.upper() == "NA":
+        die(f"metadata CSV accession is 'NA' at row {row_number}")
+    return accession
+
+
+def build_composite_alias(cluster_id: str, accession: str, organism_name: str) -> str:
+    """
+    Build the composite metadata alias before sanitisation.
+    """
+    return f"{cluster_id}_{accession}_{organism_name}"
+
+
+def add_alias(
+    alias_map: dict[str, str],
+    alias: str,
+    accession: str,
+    description: str,
+) -> None:
+    """
+    Add an alias to a mapping and reject collisions across metadata rows.
+    """
+    existing = alias_map.get(alias)
+    if existing is not None and existing != accession:
+        die(
+            f"Conflicting duplicate {description} '{alias}' for accessions "
+            f"'{existing}' and '{accession}'"
+        )
+    alias_map[alias] = accession
+
+
+def resolve_matrix_accessions(
+    matrix_names: list[str],
+    plain_aliases: dict[str, str],
+    raw_composite_aliases: dict[str, str],
+    sanitised_composite_aliases: dict[str, str],
+) -> dict[str, str]:
+    """
+    Resolve each matrix label to the underlying metadata accession.
+    """
+    matrix_to_accession: dict[str, str] = {}
+    unresolved: list[str] = []
+    for matrix_name in matrix_names:
+        resolved = plain_aliases.get(matrix_name)
+        if resolved is not None:
+            matrix_to_accession[matrix_name] = resolved
+            continue
+
+        resolved = raw_composite_aliases.get(matrix_name)
+        if resolved is not None:
+            logging.info(
+                "Matrix label '%s' matched metadata accession '%s' via raw composite alias.",
+                matrix_name,
+                resolved,
+            )
+            matrix_to_accession[matrix_name] = resolved
+            continue
+
+        sanitised_name = sanitise(matrix_name)
+        resolved = sanitised_composite_aliases.get(sanitised_name)
+        if resolved is not None:
+            logging.info(
+                "Matrix label '%s' matched metadata accession '%s' via sanitised composite alias '%s'.",
+                matrix_name,
+                resolved,
+                sanitised_name,
+            )
+            matrix_to_accession[matrix_name] = resolved
+            continue
+
+        unresolved.append(matrix_name)
+
+    if unresolved:
+        die(
+            "Matrix labels must match metadata accessions either directly or via "
+            "the composite alias ${Cluster_ID}_${accession}_${Organism_Name}. "
+            f"Unmatched matrix labels (first 20): {unresolved[:20]}"
+        )
+
+    return matrix_to_accession
 
 
 @dataclass(slots=True)
@@ -549,22 +664,20 @@ def load_and_check_tables(
     input_list: Path,
     metadata: Path,
     matrix_names: list[str],
-) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]], dict[str, str]]:
     """
     Load input_list.tsv and metadata CSV, perform structural checks:
 
       - Keep 'NA' as literal strings (not NaN)
-      - TSV: required columns 'Accession' and 'Path'
-      - TSV: Accession and Path must be unique (1:1 mapping)
-      - TSV: every Path must exist on disk
+      - TSV: required lowercase columns 'accession' and 'path'
+      - TSV: accession and path must be unique (1:1 mapping)
+      - TSV: every path must exist on disk
       - CSV: required metadata columns must be present
-      - Identity/coverage: every matrix accession MUST exist in both TSV and CSV (hard fail).
-        TSV/CSV MAY contain extras not in the matrix (warn and ignore).
-      - Cross-file equality checks for names apply only to accessions present in the matrix.
-      - Assembly_Name and Organism_Name equality tolerates space<->underscore substitutions; other differences hard-fail.
+      - Matrix labels resolve to metadata by direct accession or composite alias
+      - Resolved metadata accessions must exist in input_list.tsv
 
     Returns:
-        (tsv_by_acc, csv_by_acc) keyed by accession.
+        (tsv_by_acc, csv_by_acc, matrix_to_accession) keyed by canonical accession.
     """
 
     if not input_list.is_file():
@@ -586,8 +699,8 @@ def load_and_check_tables(
     tsv_rows, tsv_columns = read_rows(input_list, "\t")
     csv_rows, csv_columns = read_rows(metadata, ",")
 
-    # TSV: required cols and bijection Accession <-> Path
-    for col in ("Accession", "Path"):
+    # TSV: required cols and bijection accession <-> path
+    for col in ("accession", "path"):
         if col not in tsv_columns:
             die(f"input_list.tsv missing required column: '{col}'")
 
@@ -596,8 +709,8 @@ def load_and_check_tables(
     dup_acc: list[str] = []
     dup_path: list[str] = []
     for row in tsv_rows:
-        accession = row["Accession"]
-        path_value = row["Path"]
+        accession = row["accession"]
+        path_value = row["path"]
         if accession in tsv_by_acc and accession not in dup_acc:
             dup_acc.append(accession)
         else:
@@ -613,118 +726,86 @@ def load_and_check_tables(
 
     # Path existence
     for acc, row in tsv_by_acc.items():
-        p_str = str(row["Path"]).strip()
+        p_str = str(row["path"]).strip()
         if not p_str or p_str.upper() == "NA":
-            die(f"Empty or 'NA' Path for Accession '{acc}' in input_list.tsv")
+            die(f"Empty or 'NA' path for accession '{acc}' in input_list.tsv")
         if not Path(p_str).exists():
-            die(f"Path does not exist for Accession '{acc}': {p_str}")
+            die(f"Path does not exist for accession '{acc}': {p_str}")
 
     # CSV: presence of columns
-    if "Accession" not in csv_columns:
-        die("metadata CSV missing 'Accession' column.")
+    accession_columns = resolve_metadata_accession_columns(csv_columns)
+    for column in ("Cluster_ID", "Organism_Name"):
+        if column not in csv_columns:
+            die(f"metadata CSV missing required column: '{column}'")
     missing_cols = [c for c in REQUIRED_NONEMPTY_COLS if c not in csv_columns]
     if missing_cols:
         die(f"Metadata CSV missing required columns: {missing_cols}")
 
     csv_by_acc: dict[str, dict[str, str]] = {}
-    for row in csv_rows:
-        accession = row["Accession"]
+    plain_aliases: dict[str, str] = {}
+    raw_composite_aliases: dict[str, str] = {}
+    sanitised_composite_aliases: dict[str, str] = {}
+    for row_number, row in enumerate(csv_rows, start=2):
+        accession = resolve_metadata_accession_value(row, accession_columns, row_number)
         if accession in csv_by_acc:
             die(f"Duplicate Accession(s) in metadata CSV (first few): {[accession]}")
         csv_by_acc[accession] = row
+        add_alias(plain_aliases, accession, accession, "plain accession alias")
 
-    # Identity / coverage: matrix subset of TSV intersect CSV (extras warn)
-    mat_acc = set(matrix_names)
+        cluster_id = str(row.get("Cluster_ID", "") or "").strip()
+        organism_name = str(row.get("Organism_Name", "") or "").strip()
+        if cluster_id and cluster_id.upper() != "NA" and organism_name and organism_name.upper() != "NA":
+            raw_composite = build_composite_alias(cluster_id, accession, organism_name)
+            add_alias(
+                raw_composite_aliases,
+                raw_composite,
+                accession,
+                "raw composite alias",
+            )
+            sanitised_composite = sanitise(raw_composite)
+            if sanitised_composite:
+                add_alias(
+                    sanitised_composite_aliases,
+                    sanitised_composite,
+                    accession,
+                    "sanitised composite alias",
+                )
+
+    matrix_to_accession = resolve_matrix_accessions(
+        matrix_names=matrix_names,
+        plain_aliases=plain_aliases,
+        raw_composite_aliases=raw_composite_aliases,
+        sanitised_composite_aliases=sanitised_composite_aliases,
+    )
+
+    # Identity / coverage: resolved metadata accessions subset of TSV intersect CSV (extras warn)
+    resolved_accessions = set(matrix_to_accession.values())
     tsv_acc = set(tsv_by_acc)
     csv_acc = set(csv_by_acc)
 
-    missing_in_tsv = sorted(mat_acc - tsv_acc)
-    missing_in_csv = sorted(mat_acc - csv_acc)
-    if missing_in_tsv or missing_in_csv:
-
-        def head(xs: list[str], n: int = 20) -> list[str]:
-            return xs[:n]
-
+    missing_in_tsv = sorted(resolved_accessions - tsv_acc)
+    if missing_in_tsv:
         die(
-            "Matrix accessions must exist in both TSV and CSV.\n"
-            f"  In matrix not in TSV (first 20): {head(missing_in_tsv)}\n"
-            f"  In matrix not in CSV (first 20): {head(missing_in_csv)}"
+            "Resolved metadata accessions must exist in input_list.tsv.\n"
+            f"  Missing in input_list.tsv (first 20): {missing_in_tsv[:20]}"
         )
 
-    extras_tsv = sorted(tsv_acc - mat_acc)
-    extras_csv = sorted(csv_acc - mat_acc)
+    extras_tsv = sorted(tsv_acc - resolved_accessions)
+    extras_csv = sorted(csv_acc - resolved_accessions)
     if extras_tsv:
         logging.warning(
-            "Ignoring %d TSV accession(s) not present in the ANI matrix (first 20): %s",
+            "Ignoring %d TSV accession(s) not resolved from the ANI matrix (first 20): %s",
             len(extras_tsv),
             extras_tsv[:20],
         )
     if extras_csv:
         logging.warning(
-            "Ignoring %d CSV accession(s) not present in the ANI matrix (first 20): %s",
+            "Ignoring %d CSV accession(s) not resolved from the ANI matrix (first 20): %s",
             len(extras_csv),
             extras_csv[:20],
         )
 
-    # Assembly_Name equality (tolerate spaces<->underscores)
-    if "Assembly_Name" in tsv_columns and "Assembly_Name" in csv_columns:
-        bad: list[tuple[str, str, str]] = []
-        ignored_count = 0
-        for acc in matrix_names:
-            a_raw = (tsv_by_acc.get(acc, {}).get("Assembly_Name", "") or "").strip()
-            b_raw = (csv_by_acc.get(acc, {}).get("Assembly_Name", "") or "").strip()
-            if not a_raw or not b_raw:
-                continue
-            if a_raw == b_raw:
-                continue
-            if _canon_space_underscore(a_raw) == _canon_space_underscore(b_raw):
-                logging.info(
-                    "Assembly_Name differs only by space/underscore; ignoring (Acc=%s): TSV='%s' CSV='%s'",
-                    acc,
-                    a_raw,
-                    b_raw,
-                )
-                ignored_count += 1
-            else:
-                bad.append((acc, a_raw, b_raw))
-        if bad:
-            die(f"Assembly_Name mismatch between TSV and CSV (first 10): {bad[:10]}")
-        if ignored_count:
-            logging.info(
-                "Ignored %d Assembly_Name difference(s) due to space/underscore normalization.",
-                ignored_count,
-            )
-
-    # Organism_Name equality (tolerate spaces<->underscores)
-    if "Organism_Name" in tsv_columns and "Organism_Name" in csv_columns:
-        bad: list[tuple[str, str, str]] = []
-        ignored_count = 0
-        for acc in matrix_names:
-            a_raw = (tsv_by_acc.get(acc, {}).get("Organism_Name", "") or "").strip()
-            b_raw = (csv_by_acc.get(acc, {}).get("Organism_Name", "") or "").strip()
-            if not a_raw or not b_raw:
-                continue
-            if a_raw == b_raw:
-                continue
-            if _canon_space_underscore(a_raw) == _canon_space_underscore(b_raw):
-                logging.info(
-                    "Organism_Name differs only by space/underscore; ignoring (Acc=%s): TSV='%s' CSV='%s'",
-                    acc,
-                    a_raw,
-                    b_raw,
-                )
-                ignored_count += 1
-            else:
-                bad.append((acc, a_raw, b_raw))
-        if bad:
-            die(f"Organism_Name mismatch between TSV and CSV (first 10): {bad[:10]}")
-        if ignored_count:
-            logging.info(
-                "Ignored %d Organism_Name difference(s) due to space/underscore normalization.",
-                ignored_count,
-            )
-
-    return tsv_by_acc, csv_by_acc
+    return tsv_by_acc, csv_by_acc, matrix_to_accession
 
 
 # --------------------------------------------------------------------------- #
@@ -734,58 +815,60 @@ def build_genome_metadata(
     names: list[str],
     tsv: dict[str, dict[str, str]],
     csv_df: dict[str, dict[str, str]],
+    matrix_to_accession: dict[str, str],
 ) -> dict[str, Genome]:
     """
     Construct per-genome metadata records used for ranking and filters.
-    For each accession:
+    For each matrix label:
       - Enforces required fields to be non-empty/non-'NA'
       - Normalizes Assembly_Level
       - Validates Gcode and selects appropriate CheckM2 Completeness/Contamination fields
       - Parses N50, Scaffolds, Genome_Size, BUSCO, and Path
     """
     meta: dict[str, Genome] = {}
-    for acc in names:
-        if acc not in csv_df or acc not in tsv:
-            die(f"Accession '{acc}' missing from TSV or CSV after alignment.")
+    for matrix_name in names:
+        accession = matrix_to_accession[matrix_name]
+        if accession not in csv_df or accession not in tsv:
+            die(f"Accession '{accession}' missing from TSV or CSV after alignment.")
 
-        row = csv_df[acc]
+        row = csv_df[accession]
 
         # Required non-empty columns (not 'NA')
         for col in REQUIRED_NONEMPTY_COLS:
             val = str(row.get(col, "")).strip()
             if val == "" or val.upper() == "NA":
-                die(f"Required column '{col}' empty or 'NA' for accession '{acc}'")
+                die(f"Required column '{col}' empty or 'NA' for accession '{accession}'")
 
         # Normalise Assembly_Level
-        asm_level = normalise_assembly_level(str(row["Assembly_Level"]), acc=acc)
+        asm_level = normalise_assembly_level(str(row["Assembly_Level"]), acc=accession)
 
         # Gcode & metrics chosen by Gcode
-        gcode = parse_int_like(row["Gcode"], "Gcode", acc)
+        gcode = parse_int_like(row["Gcode"], "Gcode", accession)
         if gcode not in (4, 11):
-            die(f"Gcode must be 4 or 11 for accession '{acc}', got: {gcode}")
+            die(f"Gcode must be 4 or 11 for accession '{accession}', got: {gcode}")
         comp_col = "Completeness_gcode4" if gcode == 4 else "Completeness_gcode11"
         cont_col = "Contamination_gcode4" if gcode == 4 else "Contamination_gcode11"
 
         # Ensure chosen columns exist and non-empty/non-'NA'
         for col in (comp_col, cont_col):
             if col not in row:
-                die(f"Metadata CSV missing required column '{col}' for accession '{acc}'")
+                die(f"Metadata CSV missing required column '{col}' for accession '{accession}'")
             val = str(row.get(col, "")).strip()
             if val == "" or val.upper() == "NA":
-                die(f"Required column '{col}' empty or 'NA' for accession '{acc}'")
+                die(f"Required column '{col}' empty or 'NA' for accession '{accession}'")
 
         org_name = str(row.get("Organism_Name", "") or "")
-        checkm2 = parse_float_like(row[comp_col], comp_col, acc)
-        contam = parse_float_like(row[cont_col], cont_col, acc)
-        n50 = parse_int_like(row["N50"], "N50", acc)
-        scaffolds = parse_int_like(row["Scaffolds"], "Scaffolds", acc)
-        genome_size = parse_int_like(row["Genome_Size"], "Genome_Size", acc)
+        checkm2 = parse_float_like(row[comp_col], comp_col, accession)
+        contam = parse_float_like(row[cont_col], cont_col, accession)
+        n50 = parse_int_like(row["N50"], "N50", accession)
+        scaffolds = parse_int_like(row["Scaffolds"], "Scaffolds", accession)
+        genome_size = parse_int_like(row["Genome_Size"], "Genome_Size", accession)
         busco_str = str(row["BUSCO_bacillota_odb12"])
-        busco_c, busco_m = parse_busco(busco_str, acc)
-        path = str(tsv[acc]["Path"])
+        busco_c, busco_m = parse_busco(busco_str, accession)
+        path = str(tsv[accession]["path"])
 
-        meta[acc] = Genome(
-            Accession=acc,
+        meta[matrix_name] = Genome(
+            Accession=matrix_name,
             Organism_Name=org_name,
             Gcode=gcode,
             CheckM2_Completeness=checkm2,
@@ -1381,14 +1464,14 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
     names, ani, name_to_idx = load_matrix(args.ani_matrix)
 
     # 2) Tables + structural checks
-    tsv, csv_df = load_and_check_tables(
+    tsv, csv_df, matrix_to_accession = load_and_check_tables(
         input_list=args.input_list,
         metadata=args.metadata,
         matrix_names=names,
     )
 
     # 3) Build per-genome metadata
-    meta = build_genome_metadata(names, tsv, csv_df)
+    meta = build_genome_metadata(names, tsv, csv_df, matrix_to_accession)
 
     # 4) Complete-linkage clustering
     clusters = cluster_complete_linkage(ani, names, threshold)
