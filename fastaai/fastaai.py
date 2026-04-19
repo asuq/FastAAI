@@ -2728,6 +2728,18 @@ def parse_accession(acc):
 		pickle.dump([ql, tl], out)
 		
 	return([acc, out_file])
+
+
+def flatten_cached_targets(target_hits, selection):
+	"""Return cached target-hit arrays as one flat integer array."""
+	if len(selection) == 0:
+		return np.empty(0, dtype = np.int32)
+
+	selected_hits = [target_hits[int(index)] for index in selection]
+	if len(selected_hits) == 1:
+		return np.asarray(selected_hits[0], dtype = np.int32)
+
+	return np.concatenate(selected_hits).astype(np.int32, copy = False)
 			
 #all of this is exclusive to the in-mem approach for db db query
 def one_init(ql, tl, num_tgt, tgak, tpres, sd, sty, output_dir, store_results, progress_queue, qnames, tnames, temp_dir):
@@ -2785,7 +2797,10 @@ def one_work(task):
 			results = []
 			for acc in local_qgak[q][0]:
 				if acc in _ql[q]:
-					these_intersections = np.bincount(np.concatenate(_tl[acc][_ql[q][acc]]), minlength = _nt)
+					these_intersections = np.bincount(
+						flatten_cached_targets(_tl[acc], _ql[q][acc]),
+						minlength = _nt,
+					)
 				else:
 					these_intersections = np.zeros(_nt, dtype = np.int32)
 				results.append(these_intersections)
