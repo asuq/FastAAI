@@ -110,6 +110,15 @@ def convert_float_array_32(bytestring):
 def convert_float_array_64(bytestring):
 	return np.frombuffer(bytestring, dtype = np.float64)
 
+
+def normalise_pyhmmer_text(value):
+	"""Return PyHMMER text fields as Python strings."""
+	if value is None:
+		return None
+	if isinstance(value, bytes):
+		return value.decode("utf-8")
+	return str(value)
+
 def read_fasta(file):
 	cur_seq = ""
 	cur_prot = ""
@@ -298,15 +307,13 @@ class pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
-				target_acc = hit.accession
+				target_name = normalise_pyhmmer_text(hit.name)
+				target_acc = normalise_pyhmmer_text(hit.accession)
 				if target_acc is None:
 					target_acc = "-"
-				else:
-					target_acc = target_acc.decode()
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_name)
+				query_acc = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_accession)
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
@@ -512,15 +519,13 @@ class new_pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
-				target_acc = hit.accession
+				target_name = normalise_pyhmmer_text(hit.name)
+				target_acc = normalise_pyhmmer_text(hit.accession)
 				if target_acc is None:
 					target_acc = "-"
-				else:
-					target_acc = target_acc.decode()
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_name)
+				query_acc = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_accession)
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
