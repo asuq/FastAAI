@@ -262,29 +262,17 @@ draw_heatmap <- function(matrix_values, matrix_label) {
 }
 
 write_outputs <- function(matrix_values, matrix_path) {
-  # Render PDF and PNG heatmaps beside the input matrix.
+  # Render an SVG heatmap beside the input matrix.
   output_dir <- dirname(matrix_path)
-  pdf_path <- file.path(output_dir, "FastAAI_matrix_heatmap.pdf")
-  png_path <- file.path(output_dir, "FastAAI_matrix_heatmap.png")
+  svg_path <- file.path(output_dir, "FastAAI_matrix_heatmap.svg")
   figure_size <- derive_device_size(nrow(matrix_values))
   matrix_label <- basename(matrix_path)
 
-  grDevices::pdf(pdf_path, width = figure_size, height = figure_size, useDingbats = FALSE)
+  grDevices::svg(svg_path, width = figure_size, height = figure_size)
   draw_heatmap(matrix_values, matrix_label)
   grDevices::dev.off()
 
-  grDevices::png(
-    png_path,
-    width = figure_size,
-    height = figure_size,
-    units = "in",
-    res = 200
-  )
-  draw_heatmap(matrix_values, matrix_label)
-  grDevices::dev.off()
-
-  message(sprintf("Wrote %s", pdf_path))
-  message(sprintf("Wrote %s", png_path))
+  message(sprintf("Wrote %s", svg_path))
 }
 
 main <- function() {
