@@ -432,12 +432,14 @@ class pyhmmer_manager:
 			self.filter_to_best_hits()
 			try:
 				self.to_hmm_file(hmm_output)
-			except:
-				print(output, "cannot be created. HMM search failed. This file will be skipped.")
+			except Exception as exc:
+				output_name = hmm_output if hmm_output is not None else "HMM output"
+				raise RuntimeError(f"{output_name} cannot be created. HMM search failed.") from exc
 
-		except:
-			print(output, "failed to run through HMMER!")
+		except Exception as exc:
 			self.best_hits = None
+			output_name = hmm_output if hmm_output is not None else "HMM output"
+			raise RuntimeError(f"{output_name} failed to run through HMMER.") from exc
 
 class new_pyhmmer_manager:
 	def __init__(self, compress = True):

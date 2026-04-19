@@ -4,10 +4,12 @@ import gzip
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastaai.fastaai import agnostic_reader
 from fastaai.fastaai import find_hmm
 from fastaai.fastaai import new_pyhmmer_manager
+from fastaai.fastaai import pyhmmer_manager
 
 
 class AgnosticReaderTests(unittest.TestCase):
@@ -45,6 +47,15 @@ class HmmLoaderTests(unittest.TestCase):
 		manager = new_pyhmmer_manager(compress=False)
 		manager.load_hmm_from_file(find_hmm())
 		self.assertGreater(len(manager.hmm_models), 0)
+
+	def test_run_for_fastaai_raises_meaningful_error(self):
+		"""Surface HMM failures instead of masking them."""
+		manager = pyhmmer_manager(do_compress=False)
+		with patch.object(manager, "execute_search", side_effect=ValueError("boom")):
+			with self.assertRaises(RuntimeError) as context:
+				manager.run_for_fastaai({}, None)
+		self.assertIn("failed to run through HMMER", str(context.exception))
+		self.assertIsInstance(context.exception.__cause__, ValueError)
 
 
 if __name__ == "__main__":
