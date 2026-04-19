@@ -427,6 +427,22 @@ def sanitise(text: str) -> str:
     return text
 
 
+def normalise_organism_name_for_alias(organism_name: str) -> str | None:
+    """
+    Normalise the Organism_Name segment used in composite matrix-label aliases.
+    Return None for empty or 'NA' values.
+    """
+    cleaned = organism_name.strip()
+    if not cleaned or cleaned.upper() == "NA":
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", cleaned)
+    cleaned = re.sub(r"_+", "_", cleaned)
+    cleaned = cleaned.strip("_")
+    if not cleaned:
+        return None
+    return cleaned
+
+
 def resolve_metadata_accession_columns(columns: list[str]) -> list[str]:
     """
     Determine which metadata accession header names are available.
@@ -470,9 +486,10 @@ def build_composite_alias(cluster_id: str, accession: str, organism_name: str) -
     If Organism_Name is empty or 'NA', omit the suffix and keep only
     ${Cluster_ID}_${accession}.
     """
-    if not organism_name or organism_name.upper() == "NA":
+    normalised_organism_name = normalise_organism_name_for_alias(organism_name)
+    if normalised_organism_name is None:
         return f"{cluster_id}_{accession}"
-    return f"{cluster_id}_{accession}_{organism_name}"
+    return f"{cluster_id}_{accession}_{normalised_organism_name}"
 
 
 def add_alias(
@@ -539,6 +556,7 @@ def resolve_matrix_accessions(
             "Matrix labels must match metadata accessions either directly or via "
             "the composite alias ${Cluster_ID}_${accession}_${Organism_Name} "
             "or ${Cluster_ID}_${accession} when Organism_Name is NA or empty. "
+            "The Organism_Name segment is matched in underscored sanitised form. "
             f"Unmatched matrix labels (first 20): {unresolved[:20]}"
         )
 

@@ -24,6 +24,7 @@ load_and_check_tables = CLUSTER_FASTAAI.load_and_check_tables
 normalise_threshold = CLUSTER_FASTAAI.normalise_threshold
 run_pipeline = CLUSTER_FASTAAI.run_pipeline
 sanitise = CLUSTER_FASTAAI.sanitise
+normalise_organism_name_for_alias = CLUSTER_FASTAAI.normalise_organism_name_for_alias
 
 
 BUSCO = "C:98.0%[S:97.0%,D:1.0%],F:1.0%,M:1.0%,n:200"
@@ -277,7 +278,7 @@ class ClusterFastAAITests(unittest.TestCase):
             self.assertEqual(matrix_to_accession["A"], "A")
 
     def test_load_and_check_tables_logs_info_for_raw_composite_match(self) -> None:
-        """Log INFO when a matrix name matches the raw composite alias."""
+        """Log INFO when a matrix name matches the raw normalised composite alias."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             input_list_path = temp_path / "input_list.tsv"
@@ -298,10 +299,10 @@ class ClusterFastAAITests(unittest.TestCase):
                 _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
                     input_list_path,
                     metadata_path,
-                    ["cluster1_A_Organism A"],
+                    ["cluster1_A_Organism_A"],
                 )
 
-            self.assertEqual(matrix_to_accession["cluster1_A_Organism A"], "A")
+            self.assertEqual(matrix_to_accession["cluster1_A_Organism_A"], "A")
             self.assertIn("raw composite alias", "\n".join(captured.output))
 
     def test_load_and_check_tables_logs_info_for_sanitised_composite_match(self) -> None:
@@ -361,6 +362,54 @@ class ClusterFastAAITests(unittest.TestCase):
                 )
 
             self.assertEqual(matrix_to_accession[matrix_label], "A")
+            self.assertIn("sanitised composite alias", "\n".join(captured.output))
+
+    def test_normalise_organism_name_for_alias_replaces_all_separators(self) -> None:
+        """Normalise every non-alphanumeric separator in Organism_Name to underscores."""
+        self.assertEqual(
+            normalise_organism_name_for_alias("Acholeplasma laidlawii PG-8A"),
+            "Acholeplasma_laidlawii_PG_8A",
+        )
+        self.assertEqual(
+            normalise_organism_name_for_alias("Organism (A)/B:C,+test"),
+            "Organism_A_B_C_test",
+        )
+        self.assertIsNone(normalise_organism_name_for_alias("NA"))
+        self.assertIsNone(normalise_organism_name_for_alias(""))
+
+    def test_load_and_check_tables_matches_hyphenated_organism_names(self) -> None:
+        """Match matrix labels that replace hyphens in Organism_Name with underscores."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "GCA_000018785.1.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"GCA_000018785.1\t{genome_path}\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [
+                    self.metadata_row(
+                        "GCA_000018785.1",
+                        "C000047",
+                        "Acholeplasma laidlawii PG-8A",
+                    )
+                ],
+            )
+            matrix_label = "C000047_GCA_000018785_1_Acholeplasma_laidlawii_PG_8A"
+
+            with self.assertLogs(level="INFO") as captured:
+                _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    [matrix_label],
+                )
+
+            self.assertEqual(matrix_to_accession[matrix_label], "GCA_000018785.1")
             self.assertIn("sanitised composite alias", "\n".join(captured.output))
 
     def test_load_and_check_tables_allows_cluster_accession_key_when_organism_name_is_na(self) -> None:
