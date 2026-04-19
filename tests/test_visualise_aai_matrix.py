@@ -31,8 +31,8 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
 class VisualiseAAIMatrixTests(unittest.TestCase):
     """Verify the R helper accepts raw FastAAI matrices and rejects malformed ones."""
 
-    def test_visualiser_writes_pdf_and_png_for_valid_matrix(self) -> None:
-        """Create both output figures for a valid FastAAI-style matrix."""
+    def test_visualiser_writes_svg_for_valid_matrix(self) -> None:
+        """Create an SVG figure for a valid FastAAI-style matrix."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
@@ -52,12 +52,9 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             result = run_visualiser(matrix_path)
 
             self.assertEqual(result.returncode, 0, msg=result.stderr)
-            pdf_path = temp_path / "FastAAI_matrix_heatmap.pdf"
-            png_path = temp_path / "FastAAI_matrix_heatmap.png"
-            self.assertTrue(pdf_path.is_file())
-            self.assertTrue(png_path.is_file())
-            self.assertGreater(pdf_path.stat().st_size, 0)
-            self.assertGreater(png_path.stat().st_size, 0)
+            svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
+            self.assertTrue(svg_path.is_file())
+            self.assertGreater(svg_path.stat().st_size, 0)
 
     def test_visualiser_rejects_missing_query_genome_header(self) -> None:
         """Reject matrices without the FastAAI header marker."""
