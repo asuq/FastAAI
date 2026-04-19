@@ -467,7 +467,11 @@ def resolve_metadata_accession_value(
 def build_composite_alias(cluster_id: str, accession: str, organism_name: str) -> str:
     """
     Build the composite metadata alias before sanitisation.
+    If Organism_Name is empty or 'NA', omit the suffix and keep only
+    ${Cluster_ID}_${accession}.
     """
+    if not organism_name or organism_name.upper() == "NA":
+        return f"{cluster_id}_{accession}"
     return f"{cluster_id}_{accession}_{organism_name}"
 
 
@@ -533,7 +537,8 @@ def resolve_matrix_accessions(
     if unresolved:
         die(
             "Matrix labels must match metadata accessions either directly or via "
-            "the composite alias ${Cluster_ID}_${accession}_${Organism_Name}. "
+            "the composite alias ${Cluster_ID}_${accession}_${Organism_Name} "
+            "or ${Cluster_ID}_${accession} when Organism_Name is NA or empty. "
             f"Unmatched matrix labels (first 20): {unresolved[:20]}"
         )
 
@@ -754,7 +759,7 @@ def load_and_check_tables(
 
         cluster_id = str(row.get("Cluster_ID", "") or "").strip()
         organism_name = str(row.get("Organism_Name", "") or "").strip()
-        if cluster_id and cluster_id.upper() != "NA" and organism_name and organism_name.upper() != "NA":
+        if cluster_id and cluster_id.upper() != "NA":
             raw_composite = build_composite_alias(cluster_id, accession, organism_name)
             add_alias(
                 raw_composite_aliases,

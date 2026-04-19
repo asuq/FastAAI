@@ -333,6 +333,94 @@ class ClusterFastAAITests(unittest.TestCase):
             self.assertEqual(matrix_to_accession[matrix_label], "A")
             self.assertIn("sanitised composite alias", "\n".join(captured.output))
 
+    def test_load_and_check_tables_sanitises_symbol_heavy_organism_names(self) -> None:
+        """Replace non-allowed Organism_Name symbols with underscores for alias matching."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            organism_name = "Organism (A)/B:C,+test"
+            self.write_metadata_tsv(
+                metadata_path,
+                [self.metadata_row("A", "cluster.1", organism_name)],
+            )
+            matrix_label = sanitise(f"cluster.1_A_{organism_name}")
+
+            with self.assertLogs(level="INFO") as captured:
+                _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    [matrix_label],
+                )
+
+            self.assertEqual(matrix_to_accession[matrix_label], "A")
+            self.assertIn("sanitised composite alias", "\n".join(captured.output))
+
+    def test_load_and_check_tables_allows_cluster_accession_key_when_organism_name_is_na(self) -> None:
+        """Use ${Cluster_ID}_${accession} when Organism_Name is NA."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [self.metadata_row("A", "cluster.1", "NA")],
+            )
+            matrix_label = "cluster.1_A"
+
+            with self.assertLogs(level="INFO") as captured:
+                _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    [matrix_label],
+                )
+
+            self.assertEqual(matrix_to_accession[matrix_label], "A")
+            self.assertIn("raw composite alias", "\n".join(captured.output))
+
+    def test_load_and_check_tables_allows_cluster_accession_key_when_organism_name_is_empty(self) -> None:
+        """Use ${Cluster_ID}_${accession} when Organism_Name is empty."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"A\t{genome_path}\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [self.metadata_row("A", "cluster.1", "")],
+            )
+            matrix_label = sanitise("cluster.1_A")
+
+            with self.assertLogs(level="INFO") as captured:
+                _tsv, _csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    [matrix_label],
+                )
+
+            self.assertEqual(matrix_to_accession[matrix_label], "A")
+            self.assertIn("sanitised composite alias", "\n".join(captured.output))
+
     def test_load_and_check_tables_rejects_conflicting_sanitised_aliases(self) -> None:
         """Reject metadata rows that collide after sanitisation."""
         with tempfile.TemporaryDirectory() as tempdir:
