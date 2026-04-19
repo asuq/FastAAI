@@ -10,7 +10,8 @@ Core pipeline
 1) Read matrix: parse a FastAAI full tab-separated matrix of FastAAI-coded
    numeric AAI values; enforce strict structure.
 2) Validate tables:
-   - input_list.tsv: accession, path (1:1, paths must exist).
+   - input_list.tsv: accession, path (1:1 after canonical accession resolution; paths must
+     exist). Accessions may be canonical metadata accessions or composite aliases.
    - metadata.tsv : required fields present & parseable (see REQUIRED_NONEMPTY_COLS).
    - Name identity: every matrix name must resolve to metadata by plain accession or
      composite alias.
@@ -58,7 +59,7 @@ Strict validation:
   - Assembly_Level normalized case-insensitively to exactly:
         {'Complete Genome','Chromosome','Scaffold','Contig'} (no synonyms).
   - Required metadata TSV fields must be present & parseable; missing/unparsable => hard fail.
-  - accession <-> path must be 1:1 and path must exist on disk.
+  - resolved canonical accession <-> path must be 1:1 and path must exist on disk.
 
 Threading:
   - --threads is an upper bound; actual worker count is capped by hardware/scheduler limits
@@ -116,7 +117,10 @@ def parse_args() -> argparse.Namespace:
         "--input-list",
         required=True,
         type=Path,
-        help="TSV with lowercase headers: accession, path.",
+        help=(
+            "TSV with lowercase headers: accession, path. accession may be a canonical "
+            "metadata accession or a supported composite alias."
+        ),
     )
     p.add_argument(
         "-m",
@@ -510,6 +514,30 @@ def add_alias(
     alias_map[alias] = accession
 
 
+def resolve_metadata_label(
+    label: str,
+    plain_aliases: dict[str, str],
+    raw_composite_aliases: dict[str, str],
+    sanitised_composite_aliases: dict[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    """
+    Resolve one label to the underlying metadata accession.
+    """
+    resolved = plain_aliases.get(label)
+    if resolved is not None:
+        return resolved, "plain", None
+
+    resolved = raw_composite_aliases.get(label)
+    if resolved is not None:
+        return resolved, "raw", None
+
+    sanitised_name = sanitise(label)
+    resolved = sanitised_composite_aliases.get(sanitised_name)
+    if resolved is not None:
+        return resolved, "sanitised", sanitised_name
+    return None, None, None
+
+
 def resolve_matrix_accessions(
     matrix_names: list[str],
     plain_aliases: dict[str, str],
@@ -522,34 +550,30 @@ def resolve_matrix_accessions(
     matrix_to_accession: dict[str, str] = {}
     unresolved: list[str] = []
     for matrix_name in matrix_names:
-        resolved = plain_aliases.get(matrix_name)
-        if resolved is not None:
-            matrix_to_accession[matrix_name] = resolved
+        resolved, match_kind, sanitised_name = resolve_metadata_label(
+            matrix_name,
+            plain_aliases,
+            raw_composite_aliases,
+            sanitised_composite_aliases,
+        )
+        if resolved is None:
+            unresolved.append(matrix_name)
             continue
 
-        resolved = raw_composite_aliases.get(matrix_name)
-        if resolved is not None:
+        if match_kind == "raw":
             logging.info(
                 "Matrix label '%s' matched metadata accession '%s' via raw composite alias.",
                 matrix_name,
                 resolved,
             )
-            matrix_to_accession[matrix_name] = resolved
-            continue
-
-        sanitised_name = sanitise(matrix_name)
-        resolved = sanitised_composite_aliases.get(sanitised_name)
-        if resolved is not None:
+        elif match_kind == "sanitised":
             logging.info(
                 "Matrix label '%s' matched metadata accession '%s' via sanitised composite alias '%s'.",
                 matrix_name,
                 resolved,
                 sanitised_name,
             )
-            matrix_to_accession[matrix_name] = resolved
-            continue
-
-        unresolved.append(matrix_name)
+        matrix_to_accession[matrix_name] = resolved
 
     if unresolved:
         die(
@@ -693,11 +717,13 @@ def load_and_check_tables(
 
       - Keep 'NA' as literal strings (not NaN)
       - TSV: required lowercase columns 'accession' and 'path'
-      - TSV: accession and path must be unique (1:1 mapping)
+      - TSV: accession may be canonical or composite; uniqueness is enforced on the
+        resolved canonical accession-to-path mapping
       - TSV: every path must exist on disk
       - metadata TSV: required metadata columns must be present
       - Matrix labels resolve to metadata by direct accession or composite alias
-      - Resolved metadata accessions must exist in input_list.tsv
+      - input_list.tsv accessions resolve to metadata by the same alias rules
+      - Resolved metadata accessions from the matrix must exist in input_list.tsv
 
     Returns:
         (tsv_by_acc, csv_by_acc, matrix_to_accession) keyed by canonical accession.
@@ -727,28 +753,30 @@ def load_and_check_tables(
         if col not in tsv_columns:
             die(f"input_list.tsv missing required column: '{col}'")
 
-    tsv_by_acc: dict[str, dict[str, str]] = {}
+    raw_tsv_by_label: dict[str, dict[str, str]] = {}
     seen_paths: dict[str, str] = {}
-    dup_acc: list[str] = []
+    dup_label: list[str] = []
     dup_path: list[str] = []
     for row in tsv_rows:
-        accession = row["accession"]
+        accession = str(row["accession"]).strip()
         path_value = row["path"]
-        if accession in tsv_by_acc and accession not in dup_acc:
-            dup_acc.append(accession)
+        if accession == "" or accession.upper() == "NA":
+            die("input_list.tsv accession must not be empty or 'NA'")
+        if accession in raw_tsv_by_label and accession not in dup_label:
+            dup_label.append(accession)
         else:
-            tsv_by_acc[accession] = row
+            raw_tsv_by_label[accession] = row
         if path_value in seen_paths and path_value not in dup_path:
             dup_path.append(path_value)
         else:
             seen_paths[path_value] = accession
-    if dup_acc:
-        die(f"Duplicate Accession(s) in TSV (first few): {dup_acc[:10]}")
+    if dup_label:
+        die(f"Duplicate accession label(s) in input_list.tsv (first few): {dup_label[:10]}")
     if dup_path:
         die(f"Duplicate Path(s) in TSV (first few): {dup_path[:5]}")
 
     # Path existence
-    for acc, row in tsv_by_acc.items():
+    for acc, row in raw_tsv_by_label.items():
         p_str = str(row["path"]).strip()
         if not p_str or p_str.upper() == "NA":
             die(f"Empty or 'NA' path for accession '{acc}' in input_list.tsv")
@@ -793,6 +821,52 @@ def load_and_check_tables(
                     accession,
                     "sanitised composite alias",
                 )
+
+    tsv_by_acc: dict[str, dict[str, str]] = {}
+    input_label_by_acc: dict[str, str] = {}
+    unresolved_input_labels: list[str] = []
+    for input_label, row in raw_tsv_by_label.items():
+        resolved, match_kind, sanitised_name = resolve_metadata_label(
+            input_label,
+            plain_aliases,
+            raw_composite_aliases,
+            sanitised_composite_aliases,
+        )
+        if resolved is None:
+            unresolved_input_labels.append(input_label)
+            continue
+
+        if match_kind == "raw":
+            logging.info(
+                "input_list.tsv accession '%s' matched metadata accession '%s' via raw composite alias.",
+                input_label,
+                resolved,
+            )
+        elif match_kind == "sanitised":
+            logging.info(
+                "input_list.tsv accession '%s' matched metadata accession '%s' via sanitised composite alias '%s'.",
+                input_label,
+                resolved,
+                sanitised_name,
+            )
+
+        existing_label = input_label_by_acc.get(resolved)
+        if existing_label is not None and existing_label != input_label:
+            die(
+                "Multiple input_list.tsv accession labels resolved to the same metadata "
+                f"accession '{resolved}': '{existing_label}' and '{input_label}'"
+            )
+        input_label_by_acc[resolved] = input_label
+        tsv_by_acc[resolved] = row
+
+    if unresolved_input_labels:
+        die(
+            "input_list.tsv accession labels must match metadata accessions either directly or via "
+            "the composite alias ${Cluster_ID}_${accession}_${Organism_Name} "
+            "or ${Cluster_ID}_${accession} when Organism_Name is NA or empty. "
+            "The Organism_Name segment is matched in underscored sanitised form. "
+            f"Unmatched input_list.tsv accession labels (first 20): {unresolved_input_labels[:20]}"
+        )
 
     matrix_to_accession = resolve_matrix_accessions(
         matrix_names=matrix_names,

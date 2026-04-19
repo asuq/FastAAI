@@ -277,6 +277,75 @@ class ClusterFastAAITests(unittest.TestCase):
             self.assertIn("A", csv_by_acc)
             self.assertEqual(matrix_to_accession["A"], "A")
 
+    def test_load_and_check_tables_accepts_composite_input_list_label_when_organism_name_is_na(self) -> None:
+        """Resolve ${Cluster_ID}_${accession} in input_list.tsv back to the canonical accession."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"cluster.1_A\t{genome_path}\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [self.metadata_row("A", "cluster.1", "NA")],
+            )
+
+            with self.assertLogs(level="INFO") as captured:
+                tsv, csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    ["cluster.1_A"],
+                )
+
+            self.assertIn("A", tsv)
+            self.assertEqual(tsv["A"]["path"], str(genome_path))
+            self.assertIn("A", csv_by_acc)
+            self.assertEqual(matrix_to_accession["cluster.1_A"], "A")
+            self.assertIn("input_list.tsv accession", "\n".join(captured.output))
+
+    def test_load_and_check_tables_accepts_full_composite_input_list_label(self) -> None:
+        """Resolve a full composite input-list label to the canonical metadata accession."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "GCA_000018785.1.fna"
+            matrix_label = "C000047_GCA_000018785_1_Acholeplasma_laidlawii_PG_8A"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"{matrix_label}\t{genome_path}\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [
+                    self.metadata_row(
+                        "GCA_000018785.1",
+                        "C000047",
+                        "Acholeplasma laidlawii PG-8A",
+                    )
+                ],
+            )
+
+            with self.assertLogs(level="INFO") as captured:
+                tsv, csv_by_acc, matrix_to_accession = load_and_check_tables(
+                    input_list_path,
+                    metadata_path,
+                    [matrix_label],
+                )
+
+            self.assertIn("GCA_000018785.1", tsv)
+            self.assertEqual(tsv["GCA_000018785.1"]["path"], str(genome_path))
+            self.assertIn("GCA_000018785.1", csv_by_acc)
+            self.assertEqual(matrix_to_accession[matrix_label], "GCA_000018785.1")
+            self.assertIn("input_list.tsv accession", "\n".join(captured.output))
+
     def test_load_and_check_tables_logs_info_for_raw_composite_match(self) -> None:
         """Log INFO when a matrix name matches the raw normalised composite alias."""
         with tempfile.TemporaryDirectory() as tempdir:
@@ -500,6 +569,62 @@ class ClusterFastAAITests(unittest.TestCase):
 
             with self.assertRaises(SystemExit):
                 load_and_check_tables(input_list_path, metadata_path, ["A"])
+
+    def test_load_and_check_tables_rejects_duplicate_input_labels_resolving_to_same_accession(self) -> None:
+        """Reject input-list labels that collapse onto one canonical metadata accession."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path_a = temp_path / "A1.fna"
+            genome_path_b = temp_path / "A2.fna"
+            write_text(genome_path_a, ">A\nATGC\n")
+            write_text(genome_path_b, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "\n".join(
+                    [
+                        "accession\tpath",
+                        f"A\t{genome_path_a}",
+                        f"cluster1_A_Organism_A\t{genome_path_b}",
+                    ]
+                )
+                + "\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [self.metadata_row("A", "cluster1", "Organism A")],
+            )
+
+            with self.assertRaises(SystemExit):
+                load_and_check_tables(input_list_path, metadata_path, ["A"])
+
+    def test_load_and_check_tables_rejects_unmatched_input_list_label(self) -> None:
+        """Reject input-list accession labels that cannot be resolved through metadata."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            input_list_path = temp_path / "input_list.tsv"
+            metadata_path = temp_path / "metadata.tsv"
+            genome_path = temp_path / "A.fna"
+            write_text(genome_path, ">A\nATGC\n")
+            write_text(
+                input_list_path,
+                "accession\tpath\n"
+                f"not_a_match\t{genome_path}\n",
+            )
+            self.write_metadata_tsv(
+                metadata_path,
+                [self.metadata_row("A", "cluster1", "Organism_A")],
+            )
+
+            with self.assertLogs(level="CRITICAL") as captured:
+                with self.assertRaises(SystemExit):
+                    load_and_check_tables(input_list_path, metadata_path, ["A"])
+
+            self.assertIn(
+                "Unmatched input_list.tsv accession labels",
+                "\n".join(captured.output),
+            )
 
     def test_load_and_check_tables_rejects_composite_match_without_cluster_id(self) -> None:
         """Reject composite fallback when Cluster_ID is missing for that metadata row."""
