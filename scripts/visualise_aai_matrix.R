@@ -156,18 +156,44 @@ build_distance_matrix <- function(matrix_values) {
   as.dist(distance_values)
 }
 
+derive_label_stride <- function(genome_count) {
+  # Choose a deterministic thinning interval for axis labels.
+  if (genome_count <= 60) {
+    return(1)
+  }
+  if (genome_count <= 150) {
+    return(5)
+  }
+  if (genome_count <= 400) {
+    return(10)
+  }
+  25
+}
+
+build_axis_labels <- function(genome_names) {
+  # Keep a sparse, predictable subset of labels while always preserving the ends.
+  genome_count <- length(genome_names)
+  label_stride <- derive_label_stride(genome_count)
+  keep_indices <- seq.int(1, genome_count, by = label_stride)
+  keep_indices <- sort(unique(c(keep_indices, genome_count)))
+  axis_labels <- rep("", genome_count)
+  axis_labels[keep_indices] <- genome_names[keep_indices]
+  list(
+    labels = axis_labels,
+    keep_indices = keep_indices,
+    stride = label_stride
+  )
+}
+
 derive_label_cex <- function(genome_count) {
   # Scale axis labels to keep larger matrices readable.
-  if (genome_count <= 20) {
-    return(0.9)
+  if (genome_count <= 60) {
+    return(0.7)
   }
-  if (genome_count <= 40) {
-    return(0.75)
+  if (genome_count <= 150) {
+    return(0.5)
   }
-  if (genome_count <= 80) {
-    return(0.55)
-  }
-  if (genome_count <= 120) {
+  if (genome_count <= 400) {
     return(0.4)
   }
   0.3
@@ -175,8 +201,8 @@ derive_label_cex <- function(genome_count) {
 
 derive_device_size <- function(genome_count) {
   # Choose a device size that grows with matrix size but stays bounded.
-  size_inches <- 6 + genome_count * 0.18
-  max(8, min(24, size_inches))
+  size_inches <- 10 + genome_count * 0.03
+  max(10, min(40, size_inches))
 }
 
 draw_heatmap <- function(matrix_values, matrix_label) {
@@ -188,29 +214,32 @@ draw_heatmap <- function(matrix_values, matrix_label) {
   ordered_matrix <- matrix_values[ordered_indices, ordered_indices, drop = FALSE]
   dendrogram <- as.dendrogram(clustering)
   label_cex <- derive_label_cex(genome_count)
+  axis_label_info <- build_axis_labels(colnames(ordered_matrix))
+  draw_grid <- genome_count <= 75
+  matrix_margin <- if (axis_label_info$stride == 1) 4.5 else 3.5
 
   palette_values <- grDevices::colorRampPalette(
-    c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b")
+    c("#f7fbff", "#dbe9f6", "#9ecae1", "#4292c6", "#2171b5", "#084594")
   )(256)
   legend_breaks <- c(0, 15, 30, 60, 90, 95)
 
   graphics::layout(
     matrix(c(0, 1, 0, 2, 3, 4), nrow = 2, byrow = TRUE),
-    widths = c(1.8, 8.5, 2.1),
-    heights = c(1.8, 8.5)
+    widths = c(0.9, 12.0, 1.2),
+    heights = c(0.9, 12.0)
   )
 
-  graphics::par(mar = c(0, 0, 2, 0))
+  graphics::par(mar = c(0, 0, 0.4, 0))
   graphics::plot.new()
 
-  graphics::par(mar = c(0, 6, 2, 2))
+  graphics::par(mar = c(0.2, 0.6, 0.8, 0.2))
   graphics::plot(dendrogram, axes = FALSE, xaxs = "i", leaflab = "none")
-  graphics::mtext(matrix_label, side = 3, line = 0.4, cex = 0.95)
+  graphics::mtext(matrix_label, side = 3, line = 0.1, cex = 0.75)
 
-  graphics::par(mar = c(7, 0, 0, 2))
+  graphics::par(mar = c(0.6, 0.2, 0.2, 0.2))
   graphics::plot(dendrogram, horiz = TRUE, axes = FALSE, yaxs = "i", leaflab = "none")
 
-  graphics::par(mar = c(7, 6, 0, 2))
+  graphics::par(mar = c(matrix_margin, matrix_margin, 0.4, 0.4))
   image_values <- t(ordered_matrix[nrow(ordered_matrix):1, , drop = FALSE])
   graphics::image(
     x = seq_len(genome_count),
@@ -229,22 +258,24 @@ draw_heatmap <- function(matrix_values, matrix_label) {
   graphics::axis(
     side = 1,
     at = seq_len(genome_count),
-    labels = colnames(ordered_matrix),
+    labels = axis_label_info$labels,
     las = 2,
     cex.axis = label_cex
   )
   graphics::axis(
     side = 2,
     at = seq_len(genome_count),
-    labels = rev(rownames(ordered_matrix)),
+    labels = rev(axis_label_info$labels),
     las = 2,
     cex.axis = label_cex
   )
-  graphics::abline(h = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff55", lwd = 0.5)
-  graphics::abline(v = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff55", lwd = 0.5)
+  if (draw_grid) {
+    graphics::abline(h = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff66", lwd = 0.35)
+    graphics::abline(v = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff66", lwd = 0.35)
+  }
   graphics::box()
 
-  graphics::par(mar = c(5, 1, 1, 4))
+  graphics::par(mar = c(1.6, 0.2, 0.2, 1.8))
   graphics::image(
     x = 1,
     y = seq(0, 95, length.out = length(palette_values)),
@@ -255,10 +286,10 @@ draw_heatmap <- function(matrix_values, matrix_label) {
     xlab = "",
     ylab = ""
   )
-  graphics::axis(side = 4, at = legend_breaks, labels = legend_breaks, las = 2, cex.axis = 0.8)
-  graphics::mtext("Raw FastAAI value", side = 4, line = 1.9, cex = 0.8)
-  graphics::mtext("0 = no shared SCPs", side = 1, line = 2.4, cex = 0.65)
-  graphics::mtext("15 = <30% AAI, 95 = >90% AAI", side = 1, line = 3.6, cex = 0.65)
+  graphics::axis(side = 4, at = legend_breaks, labels = legend_breaks, las = 2, cex.axis = 0.65)
+  graphics::mtext("Raw value", side = 4, line = 1.1, cex = 0.6)
+  graphics::mtext("0 = no shared SCPs", side = 1, line = 0.8, cex = 0.5)
+  graphics::mtext("15 = <30%, 95 = >90%", side = 1, line = 1.7, cex = 0.5)
 }
 
 write_outputs <- function(matrix_values, matrix_path) {
