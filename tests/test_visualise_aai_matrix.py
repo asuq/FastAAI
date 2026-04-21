@@ -99,23 +99,6 @@ def run_visualiser_with_thresholds(
     )
 
 
-def expected_label_indices(genome_count: int) -> list[int]:
-    """Return the expected zero-based label positions for a matrix size."""
-    if genome_count <= 60:
-        stride = 1
-    elif genome_count <= 150:
-        stride = 5
-    elif genome_count <= 400:
-        stride = 10
-    else:
-        stride = 25
-
-    keep = list(range(0, genome_count, stride))
-    if keep[-1] != genome_count - 1:
-        keep.append(genome_count - 1)
-    return keep
-
-
 class VisualiseAAIMatrixTests(unittest.TestCase):
     """Verify the Python helper accepts raw FastAAI matrices and rejects malformed ones."""
 
@@ -181,21 +164,25 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Lower threshold must be smaller than upper threshold", result.stderr)
 
-    def test_expected_label_indices_follow_thinning_policy(self) -> None:
-        """Keep every nth label with the first and last labels always preserved."""
-        expected = {
-            20: list(range(20)),
-            100: list(range(0, 100, 5)),
-            250: list(range(0, 250, 10)),
-            1000: list(range(0, 1000, 25)),
-        }
-        expected[100].append(99)
-        expected[250].append(249)
-        expected[1000].append(999)
+    def test_should_render_sample_labels_respects_hard_cap(self) -> None:
+        """Draw sample labels only when the matrix has 20 or fewer samples."""
+        self.assertTrue(VISUALISER_MODULE.should_render_sample_labels(20))
+        self.assertFalse(VISUALISER_MODULE.should_render_sample_labels(21))
+        self.assertFalse(VISUALISER_MODULE.should_render_sample_labels(100))
 
-        for genome_count, keep in expected.items():
-            with self.subTest(genome_count=genome_count):
-                self.assertEqual(expected_label_indices(genome_count), keep)
+    def test_build_axis_labels_respects_hard_cap(self) -> None:
+        """Return all labels at or below the cap and none above it."""
+        labels_20 = [f"sample_{index}" for index in range(20)]
+        labels_21 = [f"sample_{index}" for index in range(21)]
+
+        self.assertEqual(
+            VISUALISER_MODULE.build_axis_labels(labels_20),
+            labels_20,
+        )
+        self.assertEqual(
+            VISUALISER_MODULE.build_axis_labels(labels_21),
+            [""] * 21,
+        )
 
     def test_get_heatmap_extent_uses_half_cell_edges(self) -> None:
         """Return image bounds that keep integer indices at cell centres."""
