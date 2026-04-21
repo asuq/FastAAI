@@ -204,11 +204,20 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         """Use smaller compact left and top content than the older fixed layout."""
         base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
         base_square_in = base_dimensions["base_square_in"]
-        old_left_content_in = base_square_in * (0.04 + 0.05 + 0.02 + 0.05)
+        old_left_content_in = base_square_in * (0.04 + 0.05)
         old_top_content_in = base_square_in * (0.03 + 0.07)
 
         self.assertLess(base_dimensions["left_content_in"], old_left_content_in)
         self.assertLess(base_dimensions["top_content_in"], old_top_content_in)
+
+    def test_clustered_base_dimensions_cap_legend_height_below_matrix_height(self) -> None:
+        """Keep the clustered legend far shorter than the matrix side."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
+
+        self.assertLess(
+            base_dimensions["legend_height_in"],
+            base_dimensions["matrix_side_in"],
+        )
 
     def test_prune_label_intervals_does_not_drop_clipped_labels_without_bounds(self) -> None:
         """Do not hide intervals purely because they would clip before resizing."""
@@ -308,6 +317,34 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             expanded_layout["figure_height_in"],
             base_layout["figure_height_in"],
         )
+
+    def test_clustered_layout_places_legend_in_top_left_corner(self) -> None:
+        """Place the legend above the left dendrogram rather than beside the matrix body."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
+        layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"],
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"],
+        )
+
+        self.assertLess(layout["legend_left"], layout["top_axis_left"])
+        self.assertGreater(layout["legend_bottom"], layout["left_axis_bottom"])
+        self.assertLess(layout["legend_height"], layout["left_axis_height"])
+
+    def test_clustered_layout_keeps_legend_within_top_band(self) -> None:
+        """Keep the top-left legend inside the clustered top content band."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
+        layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"],
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"],
+        )
+        top_band_top = layout["top_axis_bottom"] + (
+            base_dimensions["top_band_height_in"] / layout["figure_height_in"]
+        )
+
+        self.assertGreaterEqual(layout["legend_bottom"], layout["top_axis_bottom"])
+        self.assertLessEqual(layout["legend_bottom"] + layout["legend_height"], top_band_top)
 
     def test_build_dendrogram_segments_maps_scipy_positions_to_integer_centres(self) -> None:
         """Map SciPy dendrogram leaf coordinates onto integer cell centres."""
