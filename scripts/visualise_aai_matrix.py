@@ -14,7 +14,6 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 from matplotlib import colors
 from matplotlib.artist import Artist
 from matplotlib.gridspec import GridSpec
@@ -280,14 +279,9 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
     }
 
 
-def build_colormap() -> colors.LinearSegmentedColormap:
+def build_colormap() -> colors.Colormap:
     """Build the shared FastAAI heatmap palette."""
-    palette = sns.blend_palette(
-        ["#f7fbff", "#dbe9f6", "#9ecae1", "#4292c6", "#2171b5", "#084594"],
-        n_colors=256,
-        as_cmap=False,
-    )
-    return colors.LinearSegmentedColormap.from_list("fastaai_heatmap", palette)
+    return plt.get_cmap("viridis").copy()
 
 
 def build_legend_breaks(lower_threshold: float, upper_threshold: float) -> list[float]:
