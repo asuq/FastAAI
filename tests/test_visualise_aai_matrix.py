@@ -209,15 +209,24 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         )
         self.assertEqual(VISUALISER_MODULE.derive_top_dendrogram_height(1.0), 0.07)
 
-    def test_derive_clustered_base_dimensions_use_compact_left_and_top_space(self) -> None:
-        """Use smaller compact left and top content than the older fixed layout."""
+    def test_derive_clustered_base_dimensions_use_taller_top_band_content(self) -> None:
+        """Size the top band from whichever is taller: legend or dendrogram."""
         base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
-        base_square_in = base_dimensions["base_square_in"]
-        old_left_content_in = base_square_in * (0.04 + 0.05)
-        old_top_content_in = base_square_in * (0.03 + 0.07)
 
-        self.assertLess(base_dimensions["left_content_in"], old_left_content_in)
-        self.assertLess(base_dimensions["top_content_in"], old_top_content_in)
+        self.assertEqual(
+            base_dimensions["top_band_height_in"],
+            max(
+                base_dimensions["legend_height_in"],
+                base_dimensions["top_dendrogram_height_in"],
+            ),
+        )
+        self.assertEqual(
+            base_dimensions["left_column_width_in"],
+            max(
+                base_dimensions["legend_width_in"],
+                base_dimensions["left_dendrogram_width_in"],
+            ),
+        )
 
     def test_clustered_base_dimensions_cap_legend_height_below_matrix_height(self) -> None:
         """Keep the clustered legend far shorter than the matrix side."""
@@ -367,6 +376,59 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         finally:
             plt.close(figure)
 
+    def test_expand_figure_for_labels_does_not_shrink_fitted_layout(self) -> None:
+        """Keep the larger figure once labels already fit inside the canvas."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(20)
+        layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"] + 1.5,
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"] + 1.5,
+        )
+        figure, axis = plt.subplots(
+            figsize=(layout["figure_width_in"], layout["figure_height_in"])
+        )
+        try:
+            axis.set_position(
+                [
+                    layout["matrix_left"],
+                    layout["matrix_bottom"],
+                    layout["matrix_width"],
+                    layout["matrix_height"],
+                ]
+            )
+            axis.set_xticks([0, 1])
+            axis.set_yticks([0, 1])
+            axis.set_xticklabels(["a", "b"], rotation=90, fontsize=8)
+            axis.set_yticklabels(["c", "d"], fontsize=8)
+            axis.yaxis.tick_right()
+            axis.tick_params(
+                axis="y",
+                labelleft=False,
+                left=False,
+                labelright=True,
+                right=False,
+                pad=2,
+            )
+            figure.canvas.draw()
+            expanded_layout, right_overhang_in, bottom_overhang_in = (
+                VISUALISER_MODULE.expand_figure_for_labels(
+                    figure,
+                    axis,
+                    base_dimensions,
+                    0.08,
+                )
+            )
+
+            self.assertEqual(right_overhang_in, 0.0)
+            self.assertEqual(bottom_overhang_in, 0.0)
+            self.assertEqual(expanded_layout["figure_width_in"], layout["figure_width_in"])
+            self.assertEqual(
+                expanded_layout["figure_height_in"],
+                layout["figure_height_in"],
+            )
+        finally:
+            plt.close(figure)
+
     def test_derive_clustered_layout_expands_for_extra_label_space(self) -> None:
         """Grow figure dimensions when measured label overhang increases."""
         base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
@@ -417,6 +479,18 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
         self.assertGreaterEqual(layout["legend_bottom"], layout["top_axis_bottom"])
         self.assertLessEqual(layout["legend_bottom"] + layout["legend_height"], top_band_top)
+
+    def test_clustered_layout_matches_top_dendrogram_width_to_matrix(self) -> None:
+        """Keep the top dendrogram aligned to the full matrix width."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
+        layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"],
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"],
+        )
+
+        self.assertEqual(layout["top_axis_left"], layout["matrix_left"])
+        self.assertEqual(layout["top_axis_width"], layout["matrix_width"])
 
     def test_prune_clustered_labels_is_no_op_when_all_labels_must_be_kept(self) -> None:
         """Do not prune clustered labels when sample labels are mandatory."""
