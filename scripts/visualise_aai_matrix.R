@@ -244,23 +244,39 @@ draw_matrix_tiles <- function(matrix_values, palette_values, show_grid = FALSE) 
   graphics::box()
 }
 
-draw_legend <- function(palette_values, legend_breaks, compact = FALSE) {
-  # Draw a shared legend using vector tiles so it also renders cleanly in SVG.
+draw_legend <- function(
+  palette_values,
+  legend_breaks,
+  compact = FALSE,
+  height_fraction = 0.65,
+  vertical_offset = 0.175
+) {
+  # Draw a compact legend with an explicit height independent of the matrix panel.
+  legend_height <- min(max(height_fraction, 0.1), 0.95)
+  legend_bottom <- min(max(vertical_offset, 0.0), 1.0 - legend_height)
+  legend_top <- legend_bottom + legend_height
   legend_values <- seq(0, 95, length.out = length(palette_values))
+  legend_positions <- seq(legend_bottom, legend_top, length.out = length(palette_values))
+
+  graphics::plot.new()
+  graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1), xaxs = "i", yaxs = "i")
   graphics::image(
-    x = 1,
-    y = legend_values,
+    x = 0.5,
+    y = legend_positions,
     z = matrix(legend_values, nrow = 1),
     col = palette_values,
+    zlim = c(0, 95),
     xaxt = "n",
     yaxt = "n",
     xlab = "",
     ylab = "",
     xaxs = "i",
     yaxs = "i",
-    useRaster = FALSE
+    useRaster = FALSE,
+    add = TRUE
   )
-  graphics::axis(side = 4, at = legend_breaks, labels = legend_breaks, las = 2, cex.axis = 0.65)
+  tick_positions <- legend_bottom + (legend_breaks / 95) * legend_height
+  graphics::axis(side = 4, at = tick_positions, labels = legend_breaks, las = 2, cex.axis = 0.65)
   graphics::mtext("Raw value", side = 4, line = 1.1, cex = 0.6)
   if (compact) {
     graphics::mtext("0 = no shared SCPs", side = 1, line = 0.8, cex = 0.5)
@@ -281,7 +297,13 @@ draw_simple_heatmap <- function(matrix_values) {
   draw_matrix_tiles(matrix_values, palette$colours, show_grid = FALSE)
 
   graphics::par(mar = c(1.8, 0.2, 0.2, 1.8))
-  draw_legend(palette$colours, palette$breaks, compact = TRUE)
+  draw_legend(
+    palette$colours,
+    palette$breaks,
+    compact = TRUE,
+    height_fraction = 0.55,
+    vertical_offset = 0.225
+  )
 }
 
 draw_clustered_heatmap <- function(matrix_values, matrix_label) {
@@ -332,7 +354,13 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label) {
   )
 
   graphics::par(mar = c(1.6, 0.2, 0.2, 1.8))
-  draw_legend(palette$colours, palette$breaks, compact = TRUE)
+  draw_legend(
+    palette$colours,
+    palette$breaks,
+    compact = TRUE,
+    height_fraction = 0.6,
+    vertical_offset = 0.2
+  )
 }
 
 write_outputs <- function(matrix_values, matrix_path) {
