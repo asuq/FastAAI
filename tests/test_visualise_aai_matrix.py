@@ -5,11 +5,13 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from math import floor
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.R"
+REAL_MATRIX_PATH = REPO_ROOT / "tests" / "data" / "matrix.tsv"
 
 
 def write_text(path: Path, content: str) -> None:
@@ -45,26 +47,64 @@ def expected_label_indices(genome_count: int) -> list[int]:
     return keep
 
 
+def load_real_matrix_rows() -> list[list[str]]:
+    """Load the real FastAAI matrix fixture as tab-separated rows."""
+    return [
+        line.rstrip("\n").split("\t")
+        for line in REAL_MATRIX_PATH.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+
+
+def evenly_spaced_indices(total_size: int, subset_size: int) -> list[int]:
+    """Return deterministic evenly spaced zero-based indices across a range."""
+    if subset_size <= 0 or subset_size > total_size:
+        raise ValueError("subset_size must be between 1 and total_size")
+    if subset_size == 1:
+        return [0]
+    return sorted(
+        {
+            min(total_size - 1, floor(i * (total_size - 1) / (subset_size - 1)))
+            for i in range(subset_size)
+        }
+    )
+
+
+def write_submatrix(path: Path, rows: list[list[str]], data_indices: list[int]) -> None:
+    """Write a square FastAAI submatrix using the selected zero-based data indices."""
+    header = rows[0]
+    selected_header = [header[0]] + [header[index + 1] for index in data_indices]
+    selected_rows = ["\t".join(selected_header)]
+    for row_index in data_indices:
+        row = rows[row_index + 1]
+        selected_row = [row[0]] + [row[index + 1] for index in data_indices]
+        selected_rows.append("\t".join(selected_row))
+    path.write_text("\n".join(selected_rows) + "\n", encoding="utf-8")
+
+
 class VisualiseAAIMatrixTests(unittest.TestCase):
     """Verify the R helper accepts raw FastAAI matrices and rejects malformed ones."""
 
-    def test_visualiser_writes_both_svgs_for_valid_matrix(self) -> None:
-        """Create both clustered and matrix-only SVG figures for a valid matrix."""
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Load the real matrix fixture once for derived valid-render tests."""
+        cls.real_matrix_rows = load_real_matrix_rows()
+        cls.real_matrix_size = len(cls.real_matrix_rows) - 1
+
+    def test_visualiser_writes_both_svgs_for_20_sample_real_submatrix(self) -> None:
+        """Create both SVG figures for an evenly spaced 20-sample real submatrix."""
+        self.assert_real_submatrix_renders(20)
+
+    def test_visualiser_writes_both_svgs_for_100_sample_real_submatrix(self) -> None:
+        """Create both SVG figures for an evenly spaced 100-sample real submatrix."""
+        self.assert_real_submatrix_renders(100)
+
+    def test_visualiser_writes_both_svgs_for_full_real_matrix(self) -> None:
+        """Run the actual integration-style render test on the full real matrix fixture."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
-            write_text(
-                matrix_path,
-                "\n".join(
-                    [
-                        "query_genome\tA\tB\tC",
-                        "A\t95\t68.75\t15",
-                        "B\t68.75\t95\t0",
-                        "C\t15\t0\t95",
-                    ]
-                )
-                + "\n",
-            )
+            matrix_path.write_text(REAL_MATRIX_PATH.read_text(encoding="utf-8"), encoding="utf-8")
 
             result = run_visualiser(matrix_path)
 
@@ -76,22 +116,15 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertGreater(clustered_svg_path.stat().st_size, 0)
             self.assertGreater(simple_svg_path.stat().st_size, 0)
 
-    def test_simple_svg_contains_matrix_draw_commands(self) -> None:
-        """Emit a simple SVG that is larger than an empty shell and contains draw paths."""
+    def test_simple_svg_contains_matrix_draw_commands_for_real_submatrix(self) -> None:
+        """Emit a real-data simple SVG that is larger than an empty shell and contains draw paths."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
-            write_text(
+            write_submatrix(
                 matrix_path,
-                "\n".join(
-                    [
-                        "query_genome\tA\tB\tC",
-                        "A\t95\t68.75\t15",
-                        "B\t68.75\t95\t0",
-                        "C\t15\t0\t95",
-                    ]
-                )
-                + "\n",
+                self.real_matrix_rows,
+                evenly_spaced_indices(self.real_matrix_size, 20),
             )
 
             result = run_visualiser(matrix_path)
@@ -184,6 +217,27 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(expected_error, result.stderr)
+
+    def assert_real_submatrix_renders(self, subset_size: int) -> None:
+        """Render a deterministic real-data submatrix and verify both SVG outputs."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            matrix_path = temp_path / "FastAAI_matrix.txt"
+            write_submatrix(
+                matrix_path,
+                self.real_matrix_rows,
+                evenly_spaced_indices(self.real_matrix_size, subset_size),
+            )
+
+            result = run_visualiser(matrix_path)
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            clustered_svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
+            simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
+            self.assertTrue(clustered_svg_path.is_file())
+            self.assertTrue(simple_svg_path.is_file())
+            self.assertGreater(clustered_svg_path.stat().st_size, 0)
+            self.assertGreater(simple_svg_path.stat().st_size, 0)
 
 
 if __name__ == "__main__":
