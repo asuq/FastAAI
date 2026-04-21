@@ -25,6 +25,7 @@ from scipy.spatial.distance import squareform
 
 
 EXPECTED_HEADER = "query_genome"
+MAX_LABELLED_SAMPLES = 20
 OUTPUT_FILENAMES = (
     "FastAAI_matrix_heatmap.svg",
     "FastAAI_matrix_heatmap.png",
@@ -186,27 +187,17 @@ def build_distance_condensed(matrix_values: np.ndarray) -> np.ndarray:
     return squareform(distance_values, checks=False)
 
 
-def derive_label_stride(genome_count: int) -> int:
-    """Return the deterministic axis-label thinning interval."""
-    if genome_count <= 60:
-        return 1
-    if genome_count <= 150:
-        return 5
-    if genome_count <= 400:
-        return 10
-    return 25
+def should_render_sample_labels(genome_count: int) -> bool:
+    """Return whether sample labels should be drawn for this matrix size."""
+    return genome_count <= MAX_LABELLED_SAMPLES
 
 
 def build_axis_labels(genome_names: list[str]) -> list[str]:
-    """Keep a sparse and deterministic subset of axis labels."""
+    """Return sample labels or suppress them entirely above the hard cap."""
     genome_count = len(genome_names)
-    stride = derive_label_stride(genome_count)
-    keep_indices = set(range(0, genome_count, stride))
-    keep_indices.add(genome_count - 1)
-    return [
-        genome_name if index in keep_indices else ""
-        for index, genome_name in enumerate(genome_names)
-    ]
+    if should_render_sample_labels(genome_count):
+        return genome_names
+    return [""] * genome_count
 
 
 def derive_label_size(genome_count: int) -> float:
