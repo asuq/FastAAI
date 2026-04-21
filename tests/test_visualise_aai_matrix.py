@@ -213,11 +213,11 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             (-0.5, 19.5, 19.5, -0.5),
         )
 
-    def test_build_colormap_uses_viridis(self) -> None:
-        """Use the viridis palette for the shared heatmap colour scale."""
+    def test_build_colormap_uses_magma(self) -> None:
+        """Use the magma palette for the shared heatmap colour scale."""
         cmap = VISUALISER_MODULE.build_colormap()
 
-        self.assertEqual(cmap.name, "viridis")
+        self.assertEqual(cmap.name, "magma")
 
     def test_build_distance_condensed_uses_100_minus_identity(self) -> None:
         """Convert percent similarity values to percent distances from 100."""

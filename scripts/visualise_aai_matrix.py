@@ -281,7 +281,7 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
 
 def build_colormap() -> colors.Colormap:
     """Build the shared FastAAI heatmap palette."""
-    return plt.get_cmap("viridis").copy()
+    return plt.get_cmap("magma").copy()
 
 
 def build_legend_breaks(lower_threshold: float, upper_threshold: float) -> list[float]:
