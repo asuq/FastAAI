@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_PATH = Path("/Users/asuq/miniforge3/envs/fastaai-debug/bin/python")
 SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.py"
 DATA_DIR = REPO_ROOT / "tests" / "data"
 FIGURES_DIR = REPO_ROOT / "tests" / "figures"
@@ -94,7 +95,7 @@ def prepare_render_directory(output_dir: Path) -> None:
 def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
     """Run the Python visualiser against a matrix file."""
     return subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), str(matrix_path)],
+        [str(PYTHON_PATH), str(SCRIPT_PATH), str(matrix_path)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
