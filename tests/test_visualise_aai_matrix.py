@@ -129,12 +129,21 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         self.assertIn("<image", svg_text)
 
     def test_clustered_svg_contains_matrix_and_legend_elements(self) -> None:
-        """Ensure the clustered SVG contains matrix raster content and legend text."""
+        """Ensure the clustered SVG contains matrix raster content and legend ticks."""
         clustered_svg_path = FIGURES_DIR / "matrix_20" / "FastAAI_matrix_heatmap.svg"
         svg_text = clustered_svg_path.read_text(encoding="utf-8")
         self.assertIn("<image", svg_text)
-        self.assertIn("Raw value", svg_text)
+        self.assertIn(">30<", svg_text)
+        self.assertIn(">60<", svg_text)
+        self.assertIn(">90<", svg_text)
         self.assertGreater(svg_text.count("<path"), 5)
+
+    def test_clustered_svg_omits_legend_title_and_matrix_filename(self) -> None:
+        """Do not render the old legend title or the matrix filename as figure text."""
+        clustered_svg_path = FIGURES_DIR / "matrix_20" / "FastAAI_matrix_heatmap.svg"
+        svg_text = clustered_svg_path.read_text(encoding="utf-8")
+        self.assertNotIn("Raw value", svg_text)
+        self.assertNotIn("FastAAI_matrix.txt", svg_text)
 
     def test_visualiser_accepts_custom_heatmap_thresholds(self) -> None:
         """Apply non-default heatmap thresholds through the CLI and still render outputs."""
@@ -295,6 +304,69 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         finally:
             plt.close(figure)
 
+    def test_expand_figure_for_labels_grows_for_long_bottom_and_right_labels(self) -> None:
+        """Expand clustered layout to fit measured bottom and right label overhang."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(20)
+        layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"],
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"],
+        )
+        figure, axis = plt.subplots(
+            figsize=(layout["figure_width_in"], layout["figure_height_in"])
+        )
+        try:
+            axis.set_position(
+                [
+                    layout["matrix_left"],
+                    layout["matrix_bottom"],
+                    layout["matrix_width"],
+                    layout["matrix_height"],
+                ]
+            )
+            axis.set_xticks([0, 1])
+            axis.set_yticks([0, 1])
+            axis.set_xticklabels(
+                ["very_long_bottom_label_a", "very_long_bottom_label_b"],
+                rotation=90,
+                fontsize=8,
+            )
+            axis.set_yticklabels(
+                ["very_long_right_label_a", "very_long_right_label_b"],
+                fontsize=8,
+            )
+            axis.yaxis.tick_right()
+            axis.tick_params(
+                axis="y",
+                labelleft=False,
+                left=False,
+                labelright=True,
+                right=False,
+                pad=2,
+            )
+            figure.canvas.draw()
+            expanded_layout, right_overhang_in, bottom_overhang_in = (
+                VISUALISER_MODULE.expand_figure_for_labels(
+                    figure,
+                    axis,
+                    base_dimensions,
+                    0.08,
+                )
+            )
+
+            self.assertGreater(right_overhang_in, 0.0)
+            self.assertGreater(bottom_overhang_in, 0.0)
+            self.assertGreater(
+                expanded_layout["figure_width_in"],
+                layout["figure_width_in"],
+            )
+            self.assertGreater(
+                expanded_layout["figure_height_in"],
+                layout["figure_height_in"],
+            )
+        finally:
+            plt.close(figure)
+
     def test_derive_clustered_layout_expands_for_extra_label_space(self) -> None:
         """Grow figure dimensions when measured label overhang increases."""
         base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
@@ -345,6 +417,32 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
         self.assertGreaterEqual(layout["legend_bottom"], layout["top_axis_bottom"])
         self.assertLessEqual(layout["legend_bottom"] + layout["legend_height"], top_band_top)
+
+    def test_prune_clustered_labels_is_no_op_when_all_labels_must_be_kept(self) -> None:
+        """Do not prune clustered labels when sample labels are mandatory."""
+        figure, axis = plt.subplots(figsize=(3.0, 3.0))
+        try:
+            axis.set_xticks([0, 1])
+            axis.set_yticks([0, 1])
+            axis.set_xticklabels(["label_a", "label_b"])
+            axis.set_yticklabels(["label_c", "label_d"])
+            figure.canvas.draw()
+            VISUALISER_MODULE.prune_clustered_labels(
+                figure,
+                axis,
+                show_all_labels=True,
+            )
+
+            self.assertEqual(
+                [label.get_text() for label in axis.get_xticklabels()],
+                ["label_a", "label_b"],
+            )
+            self.assertEqual(
+                [label.get_text() for label in axis.get_yticklabels()],
+                ["label_c", "label_d"],
+            )
+        finally:
+            plt.close(figure)
 
     def test_build_dendrogram_segments_maps_scipy_positions_to_integer_centres(self) -> None:
         """Map SciPy dendrogram leaf coordinates onto integer cell centres."""
