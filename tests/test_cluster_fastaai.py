@@ -19,12 +19,14 @@ sys.modules[MODULE_SPEC.name] = CLUSTER_FASTAAI
 MODULE_SPEC.loader.exec_module(CLUSTER_FASTAAI)
 
 assign_cluster_ids = CLUSTER_FASTAAI.assign_cluster_ids
+Genome = CLUSTER_FASTAAI.Genome
 load_matrix = CLUSTER_FASTAAI.load_matrix
 load_and_check_tables = CLUSTER_FASTAAI.load_and_check_tables
 normalise_threshold = CLUSTER_FASTAAI.normalise_threshold
 run_pipeline = CLUSTER_FASTAAI.run_pipeline
 sanitise = CLUSTER_FASTAAI.sanitise
 normalise_organism_name_for_alias = CLUSTER_FASTAAI.normalise_organism_name_for_alias
+select_representative_for_indices = CLUSTER_FASTAAI.select_representative_for_indices
 
 
 BUSCO = "C:98.0%[S:97.0%,D:1.0%],F:1.0%,M:1.0%,n:200"
@@ -92,6 +94,37 @@ class ClusterFastAAITests(unittest.TestCase):
             "Contamination_gcode4": "0.5",
             "Contamination_gcode11": "0.5",
         }
+
+    def genome(
+        self,
+        accession: str,
+        *,
+        assembly_level: str = "Scaffold",
+        assembly_rank: int = 1,
+        checkm2_completeness: float = 98.0,
+        checkm2_contamination: float = 0.5,
+        n50: int = 100000,
+        scaffolds: int = 10,
+        busco_c: float = 98.0,
+        busco_m: float = 1.0,
+    ) -> Genome:
+        """Build a minimal Genome fixture for representative scoring tests."""
+        return Genome(
+            Accession=accession,
+            Organism_Name=f"Organism_{accession}",
+            Gcode=11,
+            CheckM2_Completeness=checkm2_completeness,
+            CheckM2_Contamination=checkm2_contamination,
+            N50=n50,
+            Scaffolds=scaffolds,
+            Genome_Size=4000000,
+            BUSCO_str=BUSCO,
+            BUSCO_C=busco_c,
+            BUSCO_M=busco_m,
+            Assembly_Level=assembly_level,
+            Assembly_Rank=assembly_rank,
+            Path=f"/tmp/{accession}.fna",
+        )
 
     def test_load_matrix_accepts_valid_square_matrix(self) -> None:
         """Load a valid FastAAI matrix, log AAI wording, and normalise the diagonal."""
@@ -684,6 +717,72 @@ class ClusterFastAAITests(unittest.TestCase):
         self.assertEqual(list(rep_by_cid.keys()), ["grp1", "grp2", "grp3"])
         self.assertEqual(rep_by_cid["grp1"], "A")
         self.assertEqual(idxs_by_cid["grp2"], [1, 2, 3])
+
+    def test_select_representative_uses_small_c_weight_in_all_profiles(self) -> None:
+        """Keep ANI centrality in the score, but at a much smaller weight for all profiles."""
+        import numpy as np
+
+        names = ["A", "B"]
+        idxs = [0, 1]
+        ani = np.array(
+            [
+                [100.0, 95.0],
+                [95.0, 100.0],
+            ],
+            dtype=float,
+        )
+        meta = {
+            "A": self.genome("A"),
+            "B": self.genome("B", scaffolds=5),
+        }
+
+        for profile in ("default", "isolate", "mag"):
+            with self.subTest(profile=profile):
+                _size, rep_acc, dbg = select_representative_for_indices(
+                    idxs,
+                    names,
+                    meta,
+                    ani,
+                    profile,
+                )
+                self.assertEqual(rep_acc, "B")
+                self.assertIn("C=0.05", dbg[0])
+                self.assertGreater(meta["A"].Score, 0.0)
+                self.assertGreater(meta["B"].Score, meta["A"].Score)
+
+    def test_select_representative_prefers_quality_over_centrality_with_small_c_weight(self) -> None:
+        """Prefer better scaffold quality even when another genome is more central."""
+        import numpy as np
+
+        names = ["A", "B", "C"]
+        idxs = [0, 1, 2]
+        ani = np.array(
+            [
+                [100.0, 99.0, 99.0],
+                [99.0, 100.0, 90.0],
+                [99.0, 90.0, 100.0],
+            ],
+            dtype=float,
+        )
+        meta = {
+            "A": self.genome("A", scaffolds=20),
+            "B": self.genome("B", scaffolds=2),
+            "C": self.genome("C", scaffolds=20),
+        }
+
+        size, rep_acc, dbg = select_representative_for_indices(
+            idxs,
+            names,
+            meta,
+            ani,
+            "default",
+        )
+
+        self.assertEqual(size, 3)
+        self.assertEqual(rep_acc, "B")
+        self.assertIn("C=0.05", dbg[0])
+        self.assertGreater(meta["A"].Score, meta["C"].Score)
+        self.assertGreater(meta["B"].Score, meta["A"].Score)
 
     def test_run_pipeline_writes_prefixed_cluster_outputs(self) -> None:
         """Run the full pipeline with a custom cluster prefix."""
