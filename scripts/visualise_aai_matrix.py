@@ -234,11 +234,11 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
     min_bottom_pad_in = max(0.1, min(0.16, base_square_in * 0.012))
     top_outer_pad_in = max(0.08, min(0.14, base_square_in * 0.01))
     title_pad_in = 0.18
+    top_left_gap_in = max(0.08, min(0.14, base_square_in * 0.01))
+    legend_height_in = max(0.55, min(0.95, base_square_in * 0.07))
 
     left_content_in = (
         left_outer_pad_in
-        + legend_width_in
-        + legend_gap_in
         + left_dendrogram_width_in
     )
     provisional_matrix_side_in = base_square_in - left_content_in - min_right_pad_in
@@ -246,7 +246,11 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
         derive_top_dendrogram_height(provisional_matrix_side_in / base_square_in)
         * base_square_in
     )
-    top_content_in = top_outer_pad_in + top_dendrogram_height_in + title_pad_in
+    top_band_height_in = max(
+        top_dendrogram_height_in + title_pad_in,
+        legend_height_in,
+    )
+    top_content_in = top_outer_pad_in + top_band_height_in
     matrix_side_in = min(
         provisional_matrix_side_in,
         base_square_in - top_content_in - min_bottom_pad_in,
@@ -255,7 +259,17 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
         derive_top_dendrogram_height(matrix_side_in / base_square_in)
         * base_square_in
     )
-    top_content_in = top_outer_pad_in + top_dendrogram_height_in + title_pad_in
+    top_band_height_in = max(
+        top_dendrogram_height_in + title_pad_in,
+        legend_height_in,
+    )
+    top_content_in = top_outer_pad_in + top_band_height_in
+    top_left_content_in = (
+        left_outer_pad_in
+        + legend_width_in
+        + top_left_gap_in
+        + left_dendrogram_width_in
+    )
 
     return {
         "base_square_in": base_square_in,
@@ -267,7 +281,11 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
         "min_bottom_pad_in": min_bottom_pad_in,
         "top_outer_pad_in": top_outer_pad_in,
         "title_pad_in": title_pad_in,
+        "top_left_gap_in": top_left_gap_in,
+        "legend_height_in": legend_height_in,
         "left_content_in": left_content_in,
+        "top_left_content_in": top_left_content_in,
+        "top_band_height_in": top_band_height_in,
         "top_content_in": top_content_in,
         "matrix_side_in": matrix_side_in,
         "top_dendrogram_height_in": top_dendrogram_height_in,
@@ -511,15 +529,20 @@ def derive_clustered_layout(
     figure_width_in = left_content_in + matrix_side_in + right_pad_in
     figure_height_in = top_content_in + matrix_side_in + bottom_pad_in
 
-    legend_left = base_dimensions["left_outer_pad_in"] / figure_width_in
-    legend_bottom = bottom_pad_in / figure_height_in
+    legend_left_in = base_dimensions["left_outer_pad_in"]
+    legend_bottom_in = (
+        bottom_pad_in
+        + matrix_side_in
+        + base_dimensions["top_band_height_in"]
+        - base_dimensions["legend_height_in"]
+    )
+    legend_left = legend_left_in / figure_width_in
+    legend_bottom = legend_bottom_in / figure_height_in
     legend_width = base_dimensions["legend_width_in"] / figure_width_in
-    legend_height = matrix_side_in / figure_height_in
+    legend_height = base_dimensions["legend_height_in"] / figure_height_in
 
     matrix_left_in = (
         base_dimensions["left_outer_pad_in"]
-        + base_dimensions["legend_width_in"]
-        + base_dimensions["legend_gap_in"]
         + base_dimensions["left_dendrogram_width_in"]
     )
     matrix_left = matrix_left_in / figure_width_in
@@ -527,9 +550,16 @@ def derive_clustered_layout(
     matrix_width = matrix_side_in / figure_width_in
     matrix_height = matrix_side_in / figure_height_in
 
-    top_axis_left = matrix_left
+    top_axis_left_in = (
+        base_dimensions["left_outer_pad_in"]
+        + base_dimensions["legend_width_in"]
+        + base_dimensions["top_left_gap_in"]
+    )
+    top_axis_left = top_axis_left_in / figure_width_in
     top_axis_bottom = (bottom_pad_in + matrix_side_in) / figure_height_in
-    top_axis_width = matrix_width
+    top_axis_width = (
+        matrix_side_in - base_dimensions["legend_width_in"] - base_dimensions["top_left_gap_in"]
+    ) / figure_width_in
     top_axis_height = base_dimensions["top_dendrogram_height_in"] / figure_height_in
 
     left_axis_left = (
