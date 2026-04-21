@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
-# Visualise a raw FastAAI matrix as paired SVG heatmaps.
+# Visualise a raw FastAAI matrix as paired SVG and PNG heatmaps.
 # Usage:
-#   Rscript scripts/visualise_aai_matrix.R [FastAAI_matrix.txt]
+#   Rscript scripts/visualise_aai_matrix.R [--lower-threshold 30] [--upper-threshold 90] [FastAAI_matrix.txt]
 #
 # FastAAI matrix semantics:
 #   0.0  = no shared SCPs
@@ -15,15 +15,79 @@ die <- function(message) {
 }
 
 parse_args <- function() {
-  # Return the input matrix path from the command line.
+  # Return the input matrix path and heatmap thresholds from the command line.
   args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) > 1) {
-    die("Usage: Rscript scripts/visualise_aai_matrix.R [FastAAI_matrix.txt]")
+
+  parsed <- list(
+    matrix_path = "FastAAI_matrix.txt",
+    lower_threshold = 30,
+    upper_threshold = 90
+  )
+
+  index <- 1
+  while (index <= length(args)) {
+    arg <- args[[index]]
+    if (arg == "--lower-threshold") {
+      if (index == length(args)) {
+        die("Missing value after --lower-threshold")
+      }
+      parsed$lower_threshold <- parse_threshold_value(args[[index + 1]], "--lower-threshold")
+      index <- index + 2
+      next
+    }
+    if (arg == "--upper-threshold") {
+      if (index == length(args)) {
+        die("Missing value after --upper-threshold")
+      }
+      parsed$upper_threshold <- parse_threshold_value(args[[index + 1]], "--upper-threshold")
+      index <- index + 2
+      next
+    }
+    if (startsWith(arg, "--")) {
+      die(sprintf("Unknown option: %s", arg))
+    }
+    if (parsed$matrix_path != "FastAAI_matrix.txt") {
+      die(
+        paste(
+          "Usage: Rscript scripts/visualise_aai_matrix.R",
+          "[--lower-threshold 30] [--upper-threshold 90] [FastAAI_matrix.txt]"
+        )
+      )
+    }
+    parsed$matrix_path <- arg
+    index <- index + 1
   }
-  if (length(args) == 0) {
-    return("FastAAI_matrix.txt")
+
+  validate_thresholds(parsed$lower_threshold, parsed$upper_threshold)
+  parsed
+}
+
+parse_threshold_value <- function(raw_value, option_name) {
+  # Parse a user-supplied heatmap threshold as a numeric value.
+  numeric_value <- suppressWarnings(as.numeric(raw_value))
+  if (length(numeric_value) != 1 || is.na(numeric_value) || !is.finite(numeric_value)) {
+    die(sprintf("Unable to parse %s value as a number: %s", option_name, raw_value))
   }
-  args[[1]]
+  numeric_value
+}
+
+validate_thresholds <- function(lower_threshold, upper_threshold) {
+  # Ensure the heatmap scale thresholds are ordered and within the FastAAI range.
+  if (lower_threshold < 0 || lower_threshold > 95) {
+    die(sprintf("Lower threshold must be within [0,95], got: %s", lower_threshold))
+  }
+  if (upper_threshold < 0 || upper_threshold > 95) {
+    die(sprintf("Upper threshold must be within [0,95], got: %s", upper_threshold))
+  }
+  if (lower_threshold >= upper_threshold) {
+    die(
+      sprintf(
+        "Lower threshold must be smaller than upper threshold, got: %s >= %s",
+        lower_threshold,
+        upper_threshold
+      )
+    )
+  }
 }
 
 read_matrix_file <- function(matrix_path) {
@@ -209,17 +273,26 @@ derive_device_size <- function(genome_count, simple = FALSE) {
   max(10, min(40, size_inches))
 }
 
-build_palette <- function() {
+build_palette <- function(lower_threshold, upper_threshold) {
   # Return the shared FastAAI colour palette and legend ticks.
+  midpoint <- round((lower_threshold + upper_threshold) / 2, 2)
   list(
     colours = grDevices::colorRampPalette(
       c("#f7fbff", "#dbe9f6", "#9ecae1", "#4292c6", "#2171b5", "#084594")
     )(256),
-    breaks = c(0, 15, 30, 60, 90, 95)
+    breaks = sort(unique(c(lower_threshold, midpoint, upper_threshold))),
+    lower_threshold = lower_threshold,
+    upper_threshold = upper_threshold
   )
 }
 
-draw_matrix_tiles <- function(matrix_values, palette_values, show_grid = FALSE) {
+draw_matrix_tiles <- function(
+  matrix_values,
+  palette_values,
+  lower_threshold,
+  upper_threshold,
+  show_grid = FALSE
+) {
   # Draw the matrix as SVG-safe vector tiles.
   genome_count <- nrow(matrix_values)
   image_values <- t(matrix_values[nrow(matrix_values):1, , drop = FALSE])
@@ -228,7 +301,7 @@ draw_matrix_tiles <- function(matrix_values, palette_values, show_grid = FALSE) 
     y = seq_len(genome_count),
     z = image_values,
     col = palette_values,
-    zlim = c(0, 95),
+    zlim = c(lower_threshold, upper_threshold),
     xaxt = "n",
     yaxt = "n",
     xlab = "",
@@ -247,6 +320,8 @@ draw_matrix_tiles <- function(matrix_values, palette_values, show_grid = FALSE) 
 draw_legend <- function(
   palette_values,
   legend_breaks,
+  lower_threshold,
+  upper_threshold,
   compact = FALSE,
   height_fraction = 0.65,
   vertical_offset = 0.175
@@ -265,7 +340,7 @@ draw_legend <- function(
     y = legend_positions,
     z = matrix(legend_values, nrow = 1),
     col = palette_values,
-    zlim = c(0, 95),
+    zlim = c(lower_threshold, upper_threshold),
     xaxt = "n",
     yaxt = "n",
     xlab = "",
@@ -275,38 +350,66 @@ draw_legend <- function(
     useRaster = FALSE,
     add = TRUE
   )
-  tick_positions <- legend_bottom + (legend_breaks / 95) * legend_height
+  tick_positions <- legend_bottom + ((legend_breaks - lower_threshold) / (upper_threshold - lower_threshold)) * legend_height
   graphics::axis(side = 4, at = tick_positions, labels = legend_breaks, las = 2, cex.axis = 0.65)
   graphics::mtext("Raw value", side = 4, line = 1.1, cex = 0.6)
   if (compact) {
-    graphics::mtext("0 = no shared SCPs", side = 1, line = 0.8, cex = 0.5)
-    graphics::mtext("15 = <30%, 95 = >90%", side = 1, line = 1.7, cex = 0.5)
+    graphics::mtext(
+      sprintf("<= %.2f uses low colour", lower_threshold),
+      side = 1,
+      line = 0.8,
+      cex = 0.5
+    )
+    graphics::mtext(
+      sprintf(">= %.2f uses high colour", upper_threshold),
+      side = 1,
+      line = 1.7,
+      cex = 0.5
+    )
   } else {
-    graphics::mtext("0 = no shared SCPs", side = 1, line = 1.0, cex = 0.55)
-    graphics::mtext("15 = <30%, 95 = >90%", side = 1, line = 2.0, cex = 0.55)
+    graphics::mtext(
+      sprintf("Values <= %.2f use the low colour", lower_threshold),
+      side = 1,
+      line = 1.0,
+      cex = 0.55
+    )
+    graphics::mtext(
+      sprintf("Values >= %.2f use the high colour", upper_threshold),
+      side = 1,
+      line = 2.0,
+      cex = 0.55
+    )
   }
 }
 
-draw_simple_heatmap <- function(matrix_values) {
+draw_simple_heatmap <- function(matrix_values, lower_threshold, upper_threshold) {
   # Draw a matrix-only diagnostic heatmap with no labels or dendrograms.
-  palette <- build_palette()
+  palette <- build_palette(lower_threshold, upper_threshold)
 
   graphics::layout(matrix(c(1, 2), nrow = 1), widths = c(18, 1.2))
 
   graphics::par(mar = c(0.3, 0.3, 0.3, 0.3))
-  draw_matrix_tiles(matrix_values, palette$colours, show_grid = FALSE)
+  draw_matrix_tiles(
+    matrix_values,
+    palette$colours,
+    palette$lower_threshold,
+    palette$upper_threshold,
+    show_grid = FALSE
+  )
 
   graphics::par(mar = c(1.8, 0.2, 0.2, 1.8))
   draw_legend(
     palette$colours,
     palette$breaks,
+    palette$lower_threshold,
+    palette$upper_threshold,
     compact = TRUE,
     height_fraction = 0.55,
     vertical_offset = 0.225
   )
 }
 
-draw_clustered_heatmap <- function(matrix_values, matrix_label) {
+draw_clustered_heatmap <- function(matrix_values, matrix_label, lower_threshold, upper_threshold) {
   # Draw a clustered heatmap with dendrograms and thinned labels.
   genome_count <- nrow(matrix_values)
   distance_matrix <- build_distance_matrix(matrix_values)
@@ -318,7 +421,7 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label) {
   axis_label_info <- build_axis_labels(colnames(ordered_matrix))
   matrix_margin <- if (axis_label_info$stride == 1) 4.5 else 3.5
   show_grid <- genome_count <= 75
-  palette <- build_palette()
+  palette <- build_palette(lower_threshold, upper_threshold)
 
   graphics::layout(
     matrix(c(0, 1, 0, 2, 3, 4), nrow = 2, byrow = TRUE),
@@ -337,7 +440,13 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label) {
   graphics::plot(dendrogram, horiz = TRUE, axes = FALSE, yaxs = "i", leaflab = "none")
 
   graphics::par(mar = c(matrix_margin, matrix_margin, 0.4, 0.4))
-  draw_matrix_tiles(ordered_matrix, palette$colours, show_grid = show_grid)
+  draw_matrix_tiles(
+    ordered_matrix,
+    palette$colours,
+    palette$lower_threshold,
+    palette$upper_threshold,
+    show_grid = show_grid
+  )
   graphics::axis(
     side = 1,
     at = seq_len(genome_count),
@@ -357,44 +466,77 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label) {
   draw_legend(
     palette$colours,
     palette$breaks,
+    palette$lower_threshold,
+    palette$upper_threshold,
     compact = TRUE,
     height_fraction = 0.6,
     vertical_offset = 0.2
   )
 }
 
-write_outputs <- function(matrix_values, matrix_path) {
-  # Render clustered and matrix-only SVG outputs beside the input matrix.
+write_outputs <- function(matrix_values, matrix_path, lower_threshold, upper_threshold) {
+  # Render clustered and matrix-only SVG and PNG outputs beside the input matrix.
   output_dir <- dirname(matrix_path)
   clustered_svg_path <- file.path(output_dir, "FastAAI_matrix_heatmap.svg")
   simple_svg_path <- file.path(output_dir, "FastAAI_matrix_heatmap_simple.svg")
+  clustered_png_path <- file.path(output_dir, "FastAAI_matrix_heatmap.png")
+  simple_png_path <- file.path(output_dir, "FastAAI_matrix_heatmap_simple.png")
   matrix_label <- basename(matrix_path)
+  clustered_size <- derive_device_size(nrow(matrix_values), simple = FALSE)
+  simple_size <- derive_device_size(nrow(matrix_values), simple = TRUE)
 
   grDevices::svg(
     clustered_svg_path,
-    width = derive_device_size(nrow(matrix_values), simple = FALSE),
-    height = derive_device_size(nrow(matrix_values), simple = FALSE)
+    width = clustered_size,
+    height = clustered_size
   )
-  draw_clustered_heatmap(matrix_values, matrix_label)
+  draw_clustered_heatmap(matrix_values, matrix_label, lower_threshold, upper_threshold)
   grDevices::dev.off()
 
   grDevices::svg(
     simple_svg_path,
-    width = derive_device_size(nrow(matrix_values), simple = TRUE),
-    height = derive_device_size(nrow(matrix_values), simple = TRUE)
+    width = simple_size,
+    height = simple_size
   )
-  draw_simple_heatmap(matrix_values)
+  draw_simple_heatmap(matrix_values, lower_threshold, upper_threshold)
+  grDevices::dev.off()
+
+  grDevices::png(
+    clustered_png_path,
+    width = clustered_size,
+    height = clustered_size,
+    units = "in",
+    res = 150
+  )
+  draw_clustered_heatmap(matrix_values, matrix_label, lower_threshold, upper_threshold)
+  grDevices::dev.off()
+
+  grDevices::png(
+    simple_png_path,
+    width = simple_size,
+    height = simple_size,
+    units = "in",
+    res = 150
+  )
+  draw_simple_heatmap(matrix_values, lower_threshold, upper_threshold)
   grDevices::dev.off()
 
   message(sprintf("Wrote %s", clustered_svg_path))
   message(sprintf("Wrote %s", simple_svg_path))
+  message(sprintf("Wrote %s", clustered_png_path))
+  message(sprintf("Wrote %s", simple_png_path))
 }
 
 main <- function() {
   # Run the FastAAI matrix visualisation workflow.
-  matrix_path <- parse_args()
-  matrix_values <- read_matrix_file(matrix_path)
-  write_outputs(matrix_values, matrix_path)
+  parsed_args <- parse_args()
+  matrix_values <- read_matrix_file(parsed_args$matrix_path)
+  write_outputs(
+    matrix_values,
+    parsed_args$matrix_path,
+    parsed_args$lower_threshold,
+    parsed_args$upper_threshold
+  )
   0
 }
 

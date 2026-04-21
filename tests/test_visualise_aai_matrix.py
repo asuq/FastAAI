@@ -30,6 +30,29 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_visualiser_with_thresholds(
+    matrix_path: Path,
+    lower_threshold: float,
+    upper_threshold: float,
+) -> subprocess.CompletedProcess[str]:
+    """Run the R heatmap helper with explicit heatmap thresholds."""
+    return subprocess.run(
+        [
+            "Rscript",
+            str(SCRIPT_PATH),
+            "--lower-threshold",
+            str(lower_threshold),
+            "--upper-threshold",
+            str(upper_threshold),
+            str(matrix_path),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def expected_label_indices(genome_count: int) -> list[int]:
     """Return the expected zero-based label positions for a matrix size."""
     if genome_count <= 60:
@@ -92,11 +115,11 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         cls.real_matrix_size = len(cls.real_matrix_rows) - 1
 
     def test_visualiser_writes_both_svgs_for_20_sample_real_submatrix(self) -> None:
-        """Create both SVG figures for an evenly spaced 20-sample real submatrix."""
+        """Create SVG and PNG figures for an evenly spaced 20-sample real submatrix."""
         self.assert_real_submatrix_renders(20)
 
     def test_visualiser_writes_both_svgs_for_100_sample_real_submatrix(self) -> None:
-        """Create both SVG figures for an evenly spaced 100-sample real submatrix."""
+        """Create SVG and PNG figures for an evenly spaced 100-sample real submatrix."""
         self.assert_real_submatrix_renders(100)
 
     def test_visualiser_writes_both_svgs_for_full_real_matrix(self) -> None:
@@ -111,10 +134,16 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             clustered_svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
             simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
+            clustered_png_path = temp_path / "FastAAI_matrix_heatmap.png"
+            simple_png_path = temp_path / "FastAAI_matrix_heatmap_simple.png"
             self.assertTrue(clustered_svg_path.is_file())
             self.assertTrue(simple_svg_path.is_file())
+            self.assertTrue(clustered_png_path.is_file())
+            self.assertTrue(simple_png_path.is_file())
             self.assertGreater(clustered_svg_path.stat().st_size, 0)
             self.assertGreater(simple_svg_path.stat().st_size, 0)
+            self.assertGreater(clustered_png_path.stat().st_size, 0)
+            self.assertGreater(simple_png_path.stat().st_size, 0)
 
     def test_simple_svg_contains_matrix_draw_commands_for_real_submatrix(self) -> None:
         """Emit a real-data simple SVG that is larger than an empty shell and contains draw paths."""
@@ -134,6 +163,39 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             svg_text = simple_svg_path.read_text(encoding="utf-8")
             self.assertGreater(simple_svg_path.stat().st_size, 5000)
             self.assertGreater(svg_text.count("<path"), 5)
+
+    def test_visualiser_accepts_custom_heatmap_thresholds(self) -> None:
+        """Apply non-default heatmap thresholds through the CLI and still render outputs."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            matrix_path = temp_path / "FastAAI_matrix.txt"
+            write_submatrix(
+                matrix_path,
+                self.real_matrix_rows,
+                evenly_spaced_indices(self.real_matrix_size, 20),
+            )
+
+            result = run_visualiser_with_thresholds(matrix_path, 35, 80)
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertTrue((temp_path / "FastAAI_matrix_heatmap.svg").is_file())
+            self.assertTrue((temp_path / "FastAAI_matrix_heatmap.png").is_file())
+
+    def test_visualiser_rejects_inverted_thresholds(self) -> None:
+        """Reject heatmap thresholds when the lower threshold is not smaller than the upper."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            matrix_path = temp_path / "FastAAI_matrix.txt"
+            write_submatrix(
+                matrix_path,
+                self.real_matrix_rows,
+                evenly_spaced_indices(self.real_matrix_size, 20),
+            )
+
+            result = run_visualiser_with_thresholds(matrix_path, 90, 30)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Lower threshold must be smaller than upper threshold", result.stderr)
 
     def test_expected_label_indices_follow_thinning_policy(self) -> None:
         """Keep every nth label with the first and last labels always preserved."""
@@ -219,7 +281,7 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertIn(expected_error, result.stderr)
 
     def assert_real_submatrix_renders(self, subset_size: int) -> None:
-        """Render a deterministic real-data submatrix and verify both SVG outputs."""
+        """Render a deterministic real-data submatrix and verify both SVG and PNG outputs."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
@@ -234,10 +296,16 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             clustered_svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
             simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
+            clustered_png_path = temp_path / "FastAAI_matrix_heatmap.png"
+            simple_png_path = temp_path / "FastAAI_matrix_heatmap_simple.png"
             self.assertTrue(clustered_svg_path.is_file())
             self.assertTrue(simple_svg_path.is_file())
+            self.assertTrue(clustered_png_path.is_file())
+            self.assertTrue(simple_png_path.is_file())
             self.assertGreater(clustered_svg_path.stat().st_size, 0)
             self.assertGreater(simple_svg_path.stat().st_size, 0)
+            self.assertGreater(clustered_png_path.stat().st_size, 0)
+            self.assertGreater(simple_png_path.stat().st_size, 0)
 
 
 if __name__ == "__main__":
