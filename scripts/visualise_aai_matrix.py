@@ -361,8 +361,7 @@ def build_dendrogram_segments(
         if orientation == "top":
             segment = np.column_stack([remapped_positions, y_coordinates])
         elif orientation == "left":
-            row_positions = [(leaf_count - 1) - position for position in remapped_positions]
-            segment = np.column_stack([y_coordinates, row_positions])
+            segment = np.column_stack([y_coordinates, remapped_positions])
         else:
             raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
         segments.append(segment)
@@ -395,11 +394,12 @@ def draw_manual_dendrogram(
     max_height = max(max(row) for row in dendrogram_info["dcoord"])
     if orientation == "top":
         axis.set_xlim(-0.5, leaf_count - 0.5)
-        axis.set_ylim(max_height, 0.0)
+        axis.set_ylim(0.0, max_height)
         axis.margins(x=0, y=0)
     elif orientation == "left":
         axis.set_xlim(max_height, 0.0)
-        axis.set_ylim(leaf_count - 0.5, -0.5)
+        axis.set_ylim(-0.5, leaf_count - 0.5)
+        axis.invert_yaxis()
         axis.margins(x=0, y=0)
     else:
         raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
@@ -476,27 +476,6 @@ def draw_legend(
         fontsize=6,
         color="#303030",
     )
-
-    if compact:
-        axis.text(
-            legend_left,
-            0.055,
-            f"<= {lower_threshold:.2f} uses low colour",
-            ha="left",
-            va="bottom",
-            fontsize=4.5,
-            color="#303030",
-        )
-        axis.text(
-            legend_left,
-            0.01,
-            f">= {upper_threshold:.2f} uses high colour",
-            ha="left",
-            va="bottom",
-            fontsize=4.5,
-            color="#303030",
-        )
-
 
 def render_simple_figure(
     matrix_values: np.ndarray,

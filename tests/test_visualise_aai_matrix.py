@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_PATH = Path("/Users/asuq/miniforge3/envs/fastaai-debug/bin/python")
 SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.py"
 ASSET_HELPER_PATH = REPO_ROOT / "tests" / "generate_visualiser_test_assets.py"
 REAL_MATRIX_PATH = REPO_ROOT / "tests" / "data" / "matrix.tsv"
@@ -33,7 +33,7 @@ def write_text(path: Path, content: str) -> None:
 def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
     """Run the Python heatmap helper for a given matrix path."""
     return subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), str(matrix_path)],
+        [str(PYTHON_PATH), str(SCRIPT_PATH), str(matrix_path)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -44,7 +44,7 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
 def refresh_visualiser_assets() -> subprocess.CompletedProcess[str]:
     """Regenerate stable test matrices and figures under tests/."""
     return subprocess.run(
-        [sys.executable, str(ASSET_HELPER_PATH)],
+        [str(PYTHON_PATH), str(ASSET_HELPER_PATH)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -60,7 +60,7 @@ def run_visualiser_with_thresholds(
     """Run the Python heatmap helper with explicit heatmap thresholds."""
     return subprocess.run(
         [
-            sys.executable,
+            str(PYTHON_PATH),
             str(SCRIPT_PATH),
             "--lower-threshold",
             str(lower_threshold),
