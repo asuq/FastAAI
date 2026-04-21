@@ -323,60 +323,62 @@ draw_legend <- function(
   lower_threshold,
   upper_threshold,
   compact = FALSE,
-  height_fraction = 0.65,
-  vertical_offset = 0.175
+  height_fraction = 0.3,
+  top_padding = 0.03
 ) {
-  # Draw a compact legend with an explicit height independent of the matrix panel.
+  # Draw a compact boxed legend with an explicit height independent of the matrix panel.
   legend_height <- min(max(height_fraction, 0.1), 0.95)
-  legend_bottom <- min(max(vertical_offset, 0.0), 1.0 - legend_height)
-  legend_top <- legend_bottom + legend_height
-  legend_values <- seq(0, 95, length.out = length(palette_values))
-  legend_positions <- seq(legend_bottom, legend_top, length.out = length(palette_values))
+  legend_top <- min(max(1.0 - top_padding, legend_height), 1.0)
+  legend_bottom <- legend_top - legend_height
+  legend_edges <- seq(legend_bottom, legend_top, length.out = length(palette_values) + 1)
+  legend_left <- 0.48
+  legend_right <- 0.72
 
   graphics::plot.new()
   graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1), xaxs = "i", yaxs = "i")
-  graphics::image(
-    x = 0.5,
-    y = legend_positions,
-    z = matrix(legend_values, nrow = 1),
+  graphics::rect(
+    xleft = legend_left,
+    ybottom = head(legend_edges, -1),
+    xright = legend_right,
+    ytop = tail(legend_edges, -1),
     col = palette_values,
-    zlim = c(lower_threshold, upper_threshold),
-    xaxt = "n",
-    yaxt = "n",
-    xlab = "",
-    ylab = "",
-    xaxs = "i",
-    yaxs = "i",
-    useRaster = FALSE,
-    add = TRUE
+    border = NA
+  )
+  graphics::rect(
+    xleft = legend_left,
+    ybottom = legend_bottom,
+    xright = legend_right,
+    ytop = legend_top,
+    border = "#303030",
+    lwd = 0.8
   )
   tick_positions <- legend_bottom + ((legend_breaks - lower_threshold) / (upper_threshold - lower_threshold)) * legend_height
-  graphics::axis(side = 4, at = tick_positions, labels = legend_breaks, las = 2, cex.axis = 0.65)
-  graphics::mtext("Raw value", side = 4, line = 1.1, cex = 0.6)
+  graphics::axis(side = 2, at = tick_positions, labels = legend_breaks, las = 2, cex.axis = 0.6)
+  graphics::mtext("Raw value", side = 2, line = 2.2, cex = 0.55)
   if (compact) {
     graphics::mtext(
       sprintf("<= %.2f uses low colour", lower_threshold),
       side = 1,
-      line = 0.8,
-      cex = 0.5
+      line = 0.5,
+      cex = 0.45
     )
     graphics::mtext(
       sprintf(">= %.2f uses high colour", upper_threshold),
       side = 1,
-      line = 1.7,
-      cex = 0.5
+      line = 1.3,
+      cex = 0.45
     )
   } else {
     graphics::mtext(
       sprintf("Values <= %.2f use the low colour", lower_threshold),
       side = 1,
-      line = 1.0,
+      line = 0.6,
       cex = 0.55
     )
     graphics::mtext(
       sprintf("Values >= %.2f use the high colour", upper_threshold),
       side = 1,
-      line = 2.0,
+      line = 1.6,
       cex = 0.55
     )
   }
@@ -386,26 +388,26 @@ draw_simple_heatmap <- function(matrix_values, lower_threshold, upper_threshold)
   # Draw a matrix-only diagnostic heatmap with no labels or dendrograms.
   palette <- build_palette(lower_threshold, upper_threshold)
 
-  graphics::layout(matrix(c(1, 2), nrow = 1), widths = c(18, 1.2))
+  graphics::layout(matrix(c(1, 2), nrow = 1), widths = c(1.6, 18))
 
-  graphics::par(mar = c(0.3, 0.3, 0.3, 0.3))
-  draw_matrix_tiles(
-    matrix_values,
-    palette$colours,
-    palette$lower_threshold,
-    palette$upper_threshold,
-    show_grid = FALSE
-  )
-
-  graphics::par(mar = c(1.8, 0.2, 0.2, 1.8))
+  graphics::par(mar = c(1.4, 1.8, 0.3, 0.2))
   draw_legend(
     palette$colours,
     palette$breaks,
     palette$lower_threshold,
     palette$upper_threshold,
     compact = TRUE,
-    height_fraction = 0.55,
-    vertical_offset = 0.225
+    height_fraction = 0.26,
+    top_padding = 0.04
+  )
+
+  graphics::par(mar = c(0.3, 0.2, 0.3, 0.3))
+  draw_matrix_tiles(
+    matrix_values,
+    palette$colours,
+    palette$lower_threshold,
+    palette$upper_threshold,
+    show_grid = FALSE
   )
 }
 
@@ -424,8 +426,8 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label, lower_threshold,
   palette <- build_palette(lower_threshold, upper_threshold)
 
   graphics::layout(
-    matrix(c(0, 1, 0, 2, 3, 4), nrow = 2, byrow = TRUE),
-    widths = c(0.9, 12.0, 1.2),
+    matrix(c(0, 1, 0, 4, 2, 3), nrow = 2, byrow = TRUE),
+    widths = c(1.3, 0.9, 12.0),
     heights = c(0.9, 12.0)
   )
 
@@ -439,7 +441,18 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label, lower_threshold,
   graphics::par(mar = c(0.6, 0.2, 0.2, 0.2))
   graphics::plot(dendrogram, horiz = TRUE, axes = FALSE, yaxs = "i", leaflab = "none")
 
-  graphics::par(mar = c(matrix_margin, matrix_margin, 0.4, 0.4))
+  graphics::par(mar = c(1.4, 1.8, 0.2, 0.1))
+  draw_legend(
+    palette$colours,
+    palette$breaks,
+    palette$lower_threshold,
+    palette$upper_threshold,
+    compact = TRUE,
+    height_fraction = 0.28,
+    top_padding = 0.04
+  )
+
+  graphics::par(mar = c(matrix_margin, matrix_margin, 0.4, 0.3))
   draw_matrix_tiles(
     ordered_matrix,
     palette$colours,
@@ -460,17 +473,6 @@ draw_clustered_heatmap <- function(matrix_values, matrix_label, lower_threshold,
     labels = rev(axis_label_info$labels),
     las = 2,
     cex.axis = label_cex
-  )
-
-  graphics::par(mar = c(1.6, 0.2, 0.2, 1.8))
-  draw_legend(
-    palette$colours,
-    palette$breaks,
-    palette$lower_threshold,
-    palette$upper_threshold,
-    compact = TRUE,
-    height_fraction = 0.6,
-    vertical_offset = 0.2
   )
 }
 
