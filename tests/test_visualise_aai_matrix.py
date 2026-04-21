@@ -9,8 +9,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -133,9 +135,9 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         clustered_svg_path = FIGURES_DIR / "matrix_20" / "FastAAI_matrix_heatmap.svg"
         svg_text = clustered_svg_path.read_text(encoding="utf-8")
         self.assertIn("<image", svg_text)
-        self.assertIn(">30<", svg_text)
-        self.assertIn(">60<", svg_text)
-        self.assertIn(">90<", svg_text)
+        self.assertIn(">40<", svg_text)
+        self.assertIn(">70<", svg_text)
+        self.assertIn(">100<", svg_text)
         self.assertGreater(svg_text.count("<path"), 5)
 
     def test_clustered_svg_omits_legend_title_and_matrix_filename(self) -> None:
@@ -173,6 +175,17 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Lower threshold must be smaller than upper threshold", result.stderr)
 
+    def test_validate_thresholds_accepts_full_percent_range(self) -> None:
+        """Allow the full percentage identity range up to 100."""
+        VISUALISER_MODULE.validate_thresholds(40, 100)
+
+    def test_validate_thresholds_rejects_values_above_100(self) -> None:
+        """Reject colour thresholds outside the percentage identity range."""
+        with self.assertRaises(SystemExit) as context:
+            VISUALISER_MODULE.validate_thresholds(40, 101)
+
+        self.assertIn("within [0,100]", str(context.exception))
+
     def test_should_render_sample_labels_respects_hard_cap(self) -> None:
         """Draw sample labels only when the matrix has 20 or fewer samples."""
         self.assertTrue(VISUALISER_MODULE.should_render_sample_labels(20))
@@ -199,6 +212,53 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             VISUALISER_MODULE.get_heatmap_extent(20),
             (-0.5, 19.5, 19.5, -0.5),
         )
+
+    def test_build_distance_condensed_uses_100_minus_identity(self) -> None:
+        """Convert percent similarity values to percent distances from 100."""
+        matrix_values = np.array(
+            [
+                [100.0, 68.75, 40.0],
+                [68.75, 100.0, 55.5],
+                [40.0, 55.5, 100.0],
+            ]
+        )
+
+        condensed = VISUALISER_MODULE.build_distance_condensed(matrix_values)
+
+        self.assertTrue(
+            np.allclose(
+                condensed,
+                np.array([31.25, 60.0, 44.5]),
+            )
+        )
+
+    def test_clustered_render_uses_complete_linkage_explicitly(self) -> None:
+        """Build the clustered ordering with explicit complete linkage."""
+        genome_names = ["A", "B", "C"]
+        matrix_values = np.array(
+            [
+                [100.0, 80.0, 45.0],
+                [80.0, 100.0, 50.0],
+                [45.0, 50.0, 100.0],
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_path = Path(tempdir) / "clustered.svg"
+            with mock.patch.object(
+                VISUALISER_MODULE,
+                "linkage",
+                wraps=VISUALISER_MODULE.linkage,
+            ) as linkage_mock:
+                VISUALISER_MODULE.render_clustered_figure(
+                    genome_names,
+                    matrix_values,
+                    output_path,
+                    "clustered.svg",
+                    40.0,
+                    100.0,
+                )
+
+        self.assertEqual(linkage_mock.call_args.kwargs["method"], "complete")
 
     def test_derive_top_dendrogram_height_scales_with_matrix_size(self) -> None:
         """Use a lower capped clustered top dendrogram height."""
@@ -592,6 +652,28 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
                 "B\t68.75\t95",
             ],
             "Non-numeric FastAAI value",
+        )
+
+    def test_visualiser_rejects_missing_values(self) -> None:
+        """Reject missing or NA-like matrix cells instead of imputing them."""
+        self.assert_matrix_failure(
+            [
+                "query_genome\tA\tB",
+                "A\t100\tNA",
+                "B\t68.75\t100",
+            ],
+            "Non-numeric FastAAI value",
+        )
+
+    def test_visualiser_rejects_values_above_100(self) -> None:
+        """Reject matrix values outside the percentage identity range."""
+        self.assert_matrix_failure(
+            [
+                "query_genome\tA\tB",
+                "A\t100\t68.75",
+                "B\t68.75\t101",
+            ],
+            "supported raw range [0,100]",
         )
 
     def test_visualiser_rejects_asymmetric_values(self) -> None:

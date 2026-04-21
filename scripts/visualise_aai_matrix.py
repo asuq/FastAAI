@@ -55,13 +55,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lower-threshold",
         type=float,
-        default=30.0,
+        default=40.0,
         help="Lower heatmap threshold for colour clipping.",
     )
     parser.add_argument(
         "--upper-threshold",
         type=float,
-        default=90.0,
+        default=100.0,
         help="Upper heatmap threshold for colour clipping.",
     )
     args = parser.parse_args()
@@ -71,10 +71,10 @@ def parse_args() -> argparse.Namespace:
 
 def validate_thresholds(lower_threshold: float, upper_threshold: float) -> None:
     """Validate the user-supplied threshold range."""
-    if not 0 <= lower_threshold <= 95:
-        die(f"Lower threshold must be within [0,95], got: {lower_threshold}")
-    if not 0 <= upper_threshold <= 95:
-        die(f"Upper threshold must be within [0,95], got: {upper_threshold}")
+    if not 0 <= lower_threshold <= 100:
+        die(f"Lower threshold must be within [0,100], got: {lower_threshold}")
+    if not 0 <= upper_threshold <= 100:
+        die(f"Upper threshold must be within [0,100], got: {upper_threshold}")
     if lower_threshold >= upper_threshold:
         die(
             "Lower threshold must be smaller than upper threshold, "
@@ -152,9 +152,9 @@ def read_matrix_file(matrix_path: Path) -> tuple[list[str], np.ndarray]:
                     "Non-numeric FastAAI value at row "
                     f"'{row_name}', column '{genome_names[column_index]}': '{raw_value}'"
                 )
-            if value < 0 or value > 95:
+            if value < 0 or value > 100:
                 die(
-                    "FastAAI value out of the supported raw range [0,95] at row "
+                    "FastAAI value out of the supported raw range [0,100] at row "
                     f"'{row_name}', column '{genome_names[column_index]}': {raw_value}"
                 )
             numeric_values.append(value)
@@ -177,9 +177,8 @@ def read_matrix_file(matrix_path: Path) -> tuple[list[str], np.ndarray]:
 
 
 def build_distance_condensed(matrix_values: np.ndarray) -> np.ndarray:
-    """Convert the observed FastAAI similarity scale into condensed distances."""
-    similarity_ceiling = float(matrix_values.max())
-    distance_values = similarity_ceiling - matrix_values
+    """Convert percent FastAAI similarity values into condensed distances."""
+    distance_values = 100.0 - matrix_values
     distance_values[(distance_values < 0) & (distance_values > -SYMMETRY_TOLERANCE)] = 0
     if np.any(distance_values < 0):
         die("Derived negative distances from the FastAAI matrix.")
