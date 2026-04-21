@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib import colors
+from matplotlib.artist import Artist
 from matplotlib.gridspec import GridSpec
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
@@ -226,6 +227,11 @@ def derive_device_size(genome_count: int, simple: bool = False) -> float:
     return max(10.0, min(40.0, 10.0 + genome_count * 0.03))
 
 
+def derive_top_dendrogram_height(matrix_size: float) -> float:
+    """Return the clustered top dendrogram height as a figure fraction."""
+    return max(0.045, min(0.07, matrix_size * 0.09))
+
+
 def build_colormap() -> colors.LinearSegmentedColormap:
     """Build the shared FastAAI heatmap palette."""
     palette = sns.blend_palette(
@@ -245,6 +251,24 @@ def build_legend_breaks(lower_threshold: float, upper_threshold: float) -> list[
 def get_heatmap_extent(leaf_count: int) -> tuple[float, float, float, float]:
     """Return the explicit image extent for a square heatmap."""
     return (-0.5, leaf_count - 0.5, leaf_count - 0.5, -0.5)
+
+
+def prune_label_intervals(
+    intervals: list[tuple[float, float]],
+    lower_bound: float,
+    upper_bound: float,
+) -> list[bool]:
+    """Keep only intervals that fit within bounds and do not overlap."""
+    keep_flags: list[bool] = []
+    last_kept_end: float | None = None
+    for start, end in intervals:
+        fits_bounds = start >= lower_bound and end <= upper_bound
+        overlaps_previous = last_kept_end is not None and start < last_kept_end
+        keep_label = fits_bounds and not overlaps_previous
+        keep_flags.append(keep_label)
+        if keep_label:
+            last_kept_end = end
+    return keep_flags
 
 
 def configure_matrix_axis(
@@ -401,6 +425,48 @@ def apply_dendrogram_limits(
 
     axis.margins(x=0, y=0)
     axis.set_autoscale_on(False)
+
+
+def filter_tick_labels_to_fit(
+    figure: plt.Figure,
+    labels: list[Artist],
+    axis_name: str,
+) -> None:
+    """Hide tick labels that clip or overlap within the figure."""
+    renderer = figure.canvas.get_renderer()
+    figure_box = figure.bbox
+    intervals: list[tuple[float, float]] = []
+    visible_labels: list[Artist] = []
+
+    for label in labels:
+        if not label.get_text():
+            label.set_visible(False)
+            continue
+        label.set_visible(True)
+        bbox = label.get_window_extent(renderer=renderer)
+        if axis_name == "x":
+            intervals.append((bbox.x0, bbox.x1))
+        elif axis_name == "y":
+            intervals.append((bbox.y0, bbox.y1))
+        else:
+            raise ValueError(f"Unsupported label axis: {axis_name}")
+        visible_labels.append(label)
+
+    if axis_name == "x":
+        keep_flags = prune_label_intervals(intervals, figure_box.x0, figure_box.x1)
+    else:
+        keep_flags = prune_label_intervals(intervals, figure_box.y0, figure_box.y1)
+
+    for label, keep_label in zip(visible_labels, keep_flags, strict=True):
+        if not keep_label:
+            label.set_text("")
+            label.set_visible(False)
+
+
+def prune_clustered_labels(figure: plt.Figure, matrix_axis: plt.Axes) -> None:
+    """Hide clustered labels that do not fit within the figure."""
+    filter_tick_labels_to_fit(figure, list(matrix_axis.get_xticklabels()), "x")
+    filter_tick_labels_to_fit(figure, list(matrix_axis.get_yticklabels()), "y")
 
 
 def draw_manual_dendrogram(
@@ -565,13 +631,16 @@ def render_clustered_figure(
     left_dendrogram_width = 0.05
     right_label_space = 0.16
     bottom_label_space = 0.08
-    top_dendrogram_height = 0.12
     top_margin = 0.03
 
     matrix_left = legend_left + legend_width + legend_gap + left_dendrogram_width
     max_matrix_width = 1.0 - right_label_space - matrix_left
+    provisional_max_matrix_height = 1.0 - top_margin - 0.07 - bottom_label_space
+    matrix_size = min(max_matrix_width, provisional_max_matrix_height)
+    top_dendrogram_height = derive_top_dendrogram_height(matrix_size)
     max_matrix_height = 1.0 - top_margin - top_dendrogram_height - bottom_label_space
     matrix_size = min(max_matrix_width, max_matrix_height)
+    top_dendrogram_height = derive_top_dendrogram_height(matrix_size)
 
     legend_axis = figure.add_axes(
         [legend_left, bottom_label_space, legend_width, matrix_size]
@@ -597,6 +666,8 @@ def render_clustered_figure(
         show_grid=len(ordered_names) <= 75,
         row_labels_right=True,
     )
+    figure.canvas.draw()
+    prune_clustered_labels(figure, matrix_axis)
     figure.canvas.draw()
     matrix_position = matrix_axis.get_position()
 
