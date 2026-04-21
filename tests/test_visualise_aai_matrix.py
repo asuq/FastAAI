@@ -81,18 +81,22 @@ def run_visualiser_with_thresholds(
     matrix_path: Path,
     lower_threshold: float,
     upper_threshold: float,
+    colour_palette: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the Python heatmap helper with explicit heatmap thresholds."""
+    command = [
+        str(PYTHON_PATH),
+        str(SCRIPT_PATH),
+        "--lower-threshold",
+        str(lower_threshold),
+        "--upper-threshold",
+        str(upper_threshold),
+    ]
+    if colour_palette is not None:
+        command.extend(["--colour-palette", colour_palette])
+    command.append(str(matrix_path))
     return subprocess.run(
-        [
-            str(PYTHON_PATH),
-            str(SCRIPT_PATH),
-            "--lower-threshold",
-            str(lower_threshold),
-            "--upper-threshold",
-            str(upper_threshold),
-            str(matrix_path),
-        ],
+        command,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -163,6 +167,27 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assert_render_files_non_empty(output_dir)
 
+    def test_visualiser_accepts_custom_colour_palette(self) -> None:
+        """Apply a non-default Matplotlib palette through the CLI and still render outputs."""
+        output_dir = FIGURES_DIR / "matrix_20_palette"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for output_name in ("FastAAI_matrix.txt", *EXPECTED_OUTPUTS):
+            output_path = output_dir / output_name
+            if output_path.exists():
+                output_path.unlink()
+        matrix_path = output_dir / "FastAAI_matrix.txt"
+        shutil.copy2(MATRIX_20_PATH, matrix_path)
+
+        result = run_visualiser_with_thresholds(
+            matrix_path,
+            40,
+            100,
+            colour_palette="viridis",
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assert_render_files_non_empty(output_dir)
+
     def test_visualiser_rejects_inverted_thresholds(self) -> None:
         """Reject heatmap thresholds when the lower threshold is not smaller than the upper."""
         with tempfile.TemporaryDirectory() as tempdir:
@@ -185,6 +210,17 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             VISUALISER_MODULE.validate_thresholds(40, 101)
 
         self.assertIn("within [0,100]", str(context.exception))
+
+    def test_validate_colour_palette_accepts_known_name(self) -> None:
+        """Accept a valid Matplotlib palette name."""
+        VISUALISER_MODULE.validate_colour_palette("magma")
+
+    def test_validate_colour_palette_rejects_unknown_name(self) -> None:
+        """Reject a palette name that Matplotlib does not provide."""
+        with self.assertRaises(SystemExit) as context:
+            VISUALISER_MODULE.validate_colour_palette("not_a_palette")
+
+        self.assertIn("Unknown Matplotlib colour palette", str(context.exception))
 
     def test_should_render_sample_labels_respects_hard_cap(self) -> None:
         """Draw sample labels only when the matrix has 20 or fewer samples."""
@@ -215,7 +251,7 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
     def test_build_colormap_uses_magma(self) -> None:
         """Use the magma palette for the shared heatmap colour scale."""
-        cmap = VISUALISER_MODULE.build_colormap()
+        cmap = VISUALISER_MODULE.build_colormap("magma")
 
         self.assertEqual(cmap.name, "magma")
 
@@ -262,6 +298,7 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
                     "clustered.svg",
                     40.0,
                     100.0,
+                    "magma",
                 )
 
         self.assertEqual(linkage_mock.call_args.kwargs["method"], "complete")
