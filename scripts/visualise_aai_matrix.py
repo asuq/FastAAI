@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         "--colour-palette",
         "--color-palette",
         dest="colour_palette",
-        default="magma",
+        default="Blues",
         help="Matplotlib colour palette name for the heatmaps.",
     )
     args = parser.parse_args()

@@ -213,7 +213,7 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
     def test_validate_colour_palette_accepts_known_name(self) -> None:
         """Accept a valid Matplotlib palette name."""
-        VISUALISER_MODULE.validate_colour_palette("magma")
+        VISUALISER_MODULE.validate_colour_palette("Blues")
 
     def test_validate_colour_palette_rejects_unknown_name(self) -> None:
         """Reject a palette name that Matplotlib does not provide."""
@@ -249,11 +249,18 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             (-0.5, 19.5, 19.5, -0.5),
         )
 
-    def test_build_colormap_uses_magma(self) -> None:
-        """Use the magma palette for the shared heatmap colour scale."""
-        cmap = VISUALISER_MODULE.build_colormap("magma")
+    def test_build_colormap_uses_requested_palette(self) -> None:
+        """Use the requested palette for the shared heatmap colour scale."""
+        cmap = VISUALISER_MODULE.build_colormap("Blues")
 
-        self.assertEqual(cmap.name, "magma")
+        self.assertEqual(cmap.name, "Blues")
+
+    def test_parse_args_defaults_colour_palette_to_blues(self) -> None:
+        """Default the CLI heatmap palette to Blues."""
+        with mock.patch("sys.argv", [str(SCRIPT_PATH), str(MATRIX_20_PATH)]):
+            args = VISUALISER_MODULE.parse_args()
+
+        self.assertEqual(args.colour_palette, "Blues")
 
     def test_build_distance_condensed_uses_100_minus_identity(self) -> None:
         """Convert percent similarity values to percent distances from 100."""
@@ -298,7 +305,7 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
                     "clustered.svg",
                     40.0,
                     100.0,
-                    "magma",
+                    "Blues",
                 )
 
         self.assertEqual(linkage_mock.call_args.kwargs["method"], "complete")
