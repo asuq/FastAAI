@@ -17,6 +17,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib import colors
 from matplotlib.gridspec import GridSpec
+from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 from scipy.cluster.hierarchy import dendrogram, linkage
 from scipy.spatial.distance import squareform
@@ -341,6 +342,71 @@ def style_dendrogram_axis(axis: plt.Axes) -> None:
         spine.set_visible(False)
 
 
+def build_dendrogram_segments(
+    icoord: list[list[float]],
+    dcoord: list[list[float]],
+    leaf_count: int,
+    orientation: str,
+) -> list[np.ndarray]:
+    """Convert SciPy dendrogram coordinates to matrix-centred segments."""
+    base_scale = 10.0
+    base_offset = 5.0
+    segments: list[np.ndarray] = []
+
+    for x_coordinates, y_coordinates in zip(icoord, dcoord, strict=True):
+        remapped_positions = [
+            ((coordinate - base_offset) / base_scale)
+            for coordinate in x_coordinates
+        ]
+        if orientation == "top":
+            segment = np.column_stack([remapped_positions, y_coordinates])
+        elif orientation == "left":
+            row_positions = [(leaf_count - 1) - position for position in remapped_positions]
+            segment = np.column_stack([y_coordinates, row_positions])
+        else:
+            raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
+        segments.append(segment)
+
+    return segments
+
+
+def draw_manual_dendrogram(
+    axis: plt.Axes,
+    dendrogram_info: dict[str, list],
+    leaf_count: int,
+    orientation: str,
+) -> None:
+    """Draw a dendrogram whose tips align exactly with matrix cell centres."""
+    segments = build_dendrogram_segments(
+        dendrogram_info["icoord"],
+        dendrogram_info["dcoord"],
+        leaf_count,
+        orientation,
+    )
+    branch_collection = LineCollection(
+        segments,
+        colors="#4a4a4a",
+        linewidths=1.0,
+        capstyle="butt",
+        joinstyle="miter",
+    )
+    axis.add_collection(branch_collection)
+
+    max_height = max(max(row) for row in dendrogram_info["dcoord"])
+    if orientation == "top":
+        axis.set_xlim(-0.5, leaf_count - 0.5)
+        axis.set_ylim(max_height, 0.0)
+        axis.margins(x=0, y=0)
+    elif orientation == "left":
+        axis.set_xlim(max_height, 0.0)
+        axis.set_ylim(leaf_count - 0.5, -0.5)
+        axis.margins(x=0, y=0)
+    else:
+        raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
+
+    style_dendrogram_axis(axis)
+
+
 def draw_legend(
     axis: plt.Axes,
     cmap: colors.Colormap,
@@ -485,7 +551,8 @@ def render_clustered_figure(
     norm = colors.Normalize(vmin=lower_threshold, vmax=upper_threshold, clip=True)
     condensed_distance = build_distance_condensed(matrix_values)
     linkage_matrix = linkage(condensed_distance, method="complete")
-    ordered_indices = dendrogram(linkage_matrix, no_plot=True)["leaves"]
+    dendrogram_info = dendrogram(linkage_matrix, no_plot=True)
+    ordered_indices = dendrogram_info["leaves"]
     ordered_matrix = matrix_values[np.ix_(ordered_indices, ordered_indices)]
     ordered_names = [genome_names[index] for index in ordered_indices]
 
@@ -509,25 +576,19 @@ def render_clustered_figure(
     legend_axis = figure.add_subplot(grid[1, 0])
     matrix_axis = figure.add_subplot(grid[1, 2])
 
-    dendrogram(
-        linkage_matrix,
-        ax=top_axis,
-        no_labels=True,
-        color_threshold=None,
-        above_threshold_color="#4a4a4a",
+    draw_manual_dendrogram(
+        top_axis,
+        dendrogram_info,
+        leaf_count=len(ordered_names),
+        orientation="top",
     )
     top_axis.set_title(matrix_label, fontsize=7.5, pad=2)
-    style_dendrogram_axis(top_axis)
-
-    dendrogram(
-        linkage_matrix,
-        ax=left_axis,
+    draw_manual_dendrogram(
+        left_axis,
+        dendrogram_info,
+        leaf_count=len(ordered_names),
         orientation="left",
-        no_labels=True,
-        color_threshold=None,
-        above_threshold_color="#4a4a4a",
     )
-    style_dendrogram_axis(left_axis)
 
     draw_legend(
         legend_axis,
@@ -547,7 +608,6 @@ def render_clustered_figure(
         show_grid=len(ordered_names) <= 75,
         row_labels_right=True,
     )
-    left_axis.set_ylim(matrix_axis.get_ylim())
 
     figure.savefig(output_path, facecolor="white")
     plt.close(figure)
