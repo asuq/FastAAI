@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.R"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.py"
 DATA_DIR = REPO_ROOT / "tests" / "data"
 FIGURES_DIR = REPO_ROOT / "tests" / "figures"
 FULL_MATRIX_PATH = DATA_DIR / "matrix.tsv"
@@ -92,9 +92,9 @@ def prepare_render_directory(output_dir: Path) -> None:
 
 
 def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
-    """Run the R visualiser against a matrix file."""
+    """Run the Python visualiser against a matrix file."""
     return subprocess.run(
-        ["Rscript", str(SCRIPT_PATH), str(matrix_path)],
+        [sys.executable, str(SCRIPT_PATH), str(matrix_path)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
