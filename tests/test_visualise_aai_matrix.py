@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import unittest
-from math import floor
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.R"
+ASSET_HELPER_PATH = REPO_ROOT / "tests" / "generate_visualiser_test_assets.py"
 REAL_MATRIX_PATH = REPO_ROOT / "tests" / "data" / "matrix.tsv"
+MATRIX_20_PATH = REPO_ROOT / "tests" / "data" / "matrix_20.tsv"
+MATRIX_100_PATH = REPO_ROOT / "tests" / "data" / "matrix_100.tsv"
+FIGURES_DIR = REPO_ROOT / "tests" / "figures"
+EXPECTED_OUTPUTS = (
+    "FastAAI_matrix_heatmap.svg",
+    "FastAAI_matrix_heatmap.png",
+    "FastAAI_matrix_heatmap_simple.svg",
+    "FastAAI_matrix_heatmap_simple.png",
+)
 
 
 def write_text(path: Path, content: str) -> None:
@@ -23,6 +33,17 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
     """Run the R heatmap helper for a given matrix path."""
     return subprocess.run(
         ["Rscript", str(SCRIPT_PATH), str(matrix_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def refresh_visualiser_assets() -> subprocess.CompletedProcess[str]:
+    """Regenerate stable test matrices and figures under tests/."""
+    return subprocess.run(
+        ["python3", str(ASSET_HELPER_PATH)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -70,127 +91,57 @@ def expected_label_indices(genome_count: int) -> list[int]:
     return keep
 
 
-def load_real_matrix_rows() -> list[list[str]]:
-    """Load the real FastAAI matrix fixture as tab-separated rows."""
-    return [
-        line.rstrip("\n").split("\t")
-        for line in REAL_MATRIX_PATH.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
-
-
-def evenly_spaced_indices(total_size: int, subset_size: int) -> list[int]:
-    """Return deterministic evenly spaced zero-based indices across a range."""
-    if subset_size <= 0 or subset_size > total_size:
-        raise ValueError("subset_size must be between 1 and total_size")
-    if subset_size == 1:
-        return [0]
-    return sorted(
-        {
-            min(total_size - 1, floor(i * (total_size - 1) / (subset_size - 1)))
-            for i in range(subset_size)
-        }
-    )
-
-
-def write_submatrix(path: Path, rows: list[list[str]], data_indices: list[int]) -> None:
-    """Write a square FastAAI submatrix using the selected zero-based data indices."""
-    header = rows[0]
-    selected_header = [header[0]] + [header[index + 1] for index in data_indices]
-    selected_rows = ["\t".join(selected_header)]
-    for row_index in data_indices:
-        row = rows[row_index + 1]
-        selected_row = [row[0]] + [row[index + 1] for index in data_indices]
-        selected_rows.append("\t".join(selected_row))
-    path.write_text("\n".join(selected_rows) + "\n", encoding="utf-8")
-
-
 class VisualiseAAIMatrixTests(unittest.TestCase):
     """Verify the R helper accepts raw FastAAI matrices and rejects malformed ones."""
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Load the real matrix fixture once for derived valid-render tests."""
-        cls.real_matrix_rows = load_real_matrix_rows()
-        cls.real_matrix_size = len(cls.real_matrix_rows) - 1
+        """Regenerate the stable visualiser test assets once for the test class."""
+        result = refresh_visualiser_assets()
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr or result.stdout or "Asset refresh failed")
 
     def test_visualiser_writes_both_svgs_for_20_sample_real_submatrix(self) -> None:
-        """Create SVG and PNG figures for an evenly spaced 20-sample real submatrix."""
-        self.assert_real_submatrix_renders(20)
+        """Create SVG and PNG figures for the committed 20-sample real submatrix."""
+        self.assert_render_outputs_exist("matrix_20", MATRIX_20_PATH)
 
     def test_visualiser_writes_both_svgs_for_100_sample_real_submatrix(self) -> None:
-        """Create SVG and PNG figures for an evenly spaced 100-sample real submatrix."""
-        self.assert_real_submatrix_renders(100)
+        """Create SVG and PNG figures for the committed 100-sample real submatrix."""
+        self.assert_render_outputs_exist("matrix_100", MATRIX_100_PATH)
 
     def test_visualiser_writes_both_svgs_for_full_real_matrix(self) -> None:
         """Run the actual integration-style render test on the full real matrix fixture."""
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            matrix_path = temp_path / "FastAAI_matrix.txt"
-            matrix_path.write_text(REAL_MATRIX_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-
-            result = run_visualiser(matrix_path)
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
-            clustered_svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
-            simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
-            clustered_png_path = temp_path / "FastAAI_matrix_heatmap.png"
-            simple_png_path = temp_path / "FastAAI_matrix_heatmap_simple.png"
-            self.assertTrue(clustered_svg_path.is_file())
-            self.assertTrue(simple_svg_path.is_file())
-            self.assertTrue(clustered_png_path.is_file())
-            self.assertTrue(simple_png_path.is_file())
-            self.assertGreater(clustered_svg_path.stat().st_size, 0)
-            self.assertGreater(simple_svg_path.stat().st_size, 0)
-            self.assertGreater(clustered_png_path.stat().st_size, 0)
-            self.assertGreater(simple_png_path.stat().st_size, 0)
+        self.assert_render_outputs_exist("matrix_full", REAL_MATRIX_PATH)
 
     def test_simple_svg_contains_matrix_draw_commands_for_real_submatrix(self) -> None:
         """Emit a real-data simple SVG that is larger than an empty shell and contains draw paths."""
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            matrix_path = temp_path / "FastAAI_matrix.txt"
-            write_submatrix(
-                matrix_path,
-                self.real_matrix_rows,
-                evenly_spaced_indices(self.real_matrix_size, 20),
-            )
-
-            result = run_visualiser(matrix_path)
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
-            simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
-            svg_text = simple_svg_path.read_text(encoding="utf-8")
-            self.assertGreater(simple_svg_path.stat().st_size, 5000)
-            self.assertGreater(svg_text.count("<path"), 5)
+        simple_svg_path = FIGURES_DIR / "matrix_20" / "FastAAI_matrix_heatmap_simple.svg"
+        svg_text = simple_svg_path.read_text(encoding="utf-8")
+        self.assertGreater(simple_svg_path.stat().st_size, 5000)
+        self.assertGreater(svg_text.count("<path"), 5)
 
     def test_visualiser_accepts_custom_heatmap_thresholds(self) -> None:
         """Apply non-default heatmap thresholds through the CLI and still render outputs."""
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            matrix_path = temp_path / "FastAAI_matrix.txt"
-            write_submatrix(
-                matrix_path,
-                self.real_matrix_rows,
-                evenly_spaced_indices(self.real_matrix_size, 20),
-            )
+        output_dir = FIGURES_DIR / "matrix_20_thresholds"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for output_name in ("FastAAI_matrix.txt", *EXPECTED_OUTPUTS):
+            output_path = output_dir / output_name
+            if output_path.exists():
+                output_path.unlink()
+        matrix_path = output_dir / "FastAAI_matrix.txt"
+        shutil.copy2(MATRIX_20_PATH, matrix_path)
 
-            result = run_visualiser_with_thresholds(matrix_path, 35, 80)
+        result = run_visualiser_with_thresholds(matrix_path, 35, 80)
 
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
-            self.assertTrue((temp_path / "FastAAI_matrix_heatmap.svg").is_file())
-            self.assertTrue((temp_path / "FastAAI_matrix_heatmap.png").is_file())
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assert_render_files_non_empty(output_dir)
 
     def test_visualiser_rejects_inverted_thresholds(self) -> None:
         """Reject heatmap thresholds when the lower threshold is not smaller than the upper."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
-            write_submatrix(
-                matrix_path,
-                self.real_matrix_rows,
-                evenly_spaced_indices(self.real_matrix_size, 20),
-            )
+            matrix_path.write_text(MATRIX_20_PATH.read_text(encoding="utf-8"), encoding="utf-8")
 
             result = run_visualiser_with_thresholds(matrix_path, 90, 30)
 
@@ -280,32 +231,20 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(expected_error, result.stderr)
 
-    def assert_real_submatrix_renders(self, subset_size: int) -> None:
-        """Render a deterministic real-data submatrix and verify both SVG and PNG outputs."""
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            matrix_path = temp_path / "FastAAI_matrix.txt"
-            write_submatrix(
-                matrix_path,
-                self.real_matrix_rows,
-                evenly_spaced_indices(self.real_matrix_size, subset_size),
-            )
+    def assert_render_outputs_exist(self, figure_dir_name: str, source_matrix_path: Path) -> None:
+        """Verify a stable figure directory exists for a committed matrix fixture."""
+        self.assertTrue(source_matrix_path.is_file())
+        figure_dir = FIGURES_DIR / figure_dir_name
+        self.assertTrue(figure_dir.is_dir())
+        self.assertTrue((figure_dir / "FastAAI_matrix.txt").is_file())
+        self.assert_render_files_non_empty(figure_dir)
 
-            result = run_visualiser(matrix_path)
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
-            clustered_svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
-            simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
-            clustered_png_path = temp_path / "FastAAI_matrix_heatmap.png"
-            simple_png_path = temp_path / "FastAAI_matrix_heatmap_simple.png"
-            self.assertTrue(clustered_svg_path.is_file())
-            self.assertTrue(simple_svg_path.is_file())
-            self.assertTrue(clustered_png_path.is_file())
-            self.assertTrue(simple_png_path.is_file())
-            self.assertGreater(clustered_svg_path.stat().st_size, 0)
-            self.assertGreater(simple_svg_path.stat().st_size, 0)
-            self.assertGreater(clustered_png_path.stat().st_size, 0)
-            self.assertGreater(simple_png_path.stat().st_size, 0)
+    def assert_render_files_non_empty(self, output_dir: Path) -> None:
+        """Verify the expected figure outputs exist and are non-empty."""
+        for output_name in EXPECTED_OUTPUTS:
+            output_path = output_dir / output_name
+            self.assertTrue(output_path.is_file(), msg=f"Missing output: {output_path}")
+            self.assertGreater(output_path.stat().st_size, 0, msg=f"Empty output: {output_path}")
 
 
 if __name__ == "__main__":
