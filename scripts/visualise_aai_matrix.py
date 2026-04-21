@@ -517,6 +517,29 @@ def measure_axis_label_overhangs(
     )
 
 
+def expand_figure_for_labels(
+    figure: plt.Figure,
+    matrix_axis: plt.Axes,
+    base_dimensions: dict[str, float],
+    safety_pad_in: float,
+) -> tuple[dict[str, float], float, float]:
+    """Expand the clustered figure until right and bottom labels fit."""
+    right_overhang_in, bottom_overhang_in = measure_axis_label_overhangs(
+        figure,
+        matrix_axis,
+    )
+    final_layout = derive_clustered_layout(
+        base_dimensions,
+        right_pad_in=(
+            base_dimensions["min_right_pad_in"] + right_overhang_in + safety_pad_in
+        ),
+        bottom_pad_in=(
+            base_dimensions["min_bottom_pad_in"] + bottom_overhang_in + safety_pad_in
+        ),
+    )
+    return final_layout, right_overhang_in, bottom_overhang_in
+
+
 def derive_clustered_layout(
     base_dimensions: dict[str, float],
     right_pad_in: float,
@@ -621,8 +644,14 @@ def filter_tick_labels_to_fit(
             label.set_visible(False)
 
 
-def prune_clustered_labels(figure: plt.Figure, matrix_axis: plt.Axes) -> None:
-    """Hide only overlapping clustered labels after layout expansion."""
+def prune_clustered_labels(
+    figure: plt.Figure,
+    matrix_axis: plt.Axes,
+    show_all_labels: bool,
+) -> None:
+    """Hide overlapping clustered labels only when labels are not mandatory."""
+    if show_all_labels:
+        return
     figure.canvas.draw()
     filter_tick_labels_to_fit(list(matrix_axis.get_xticklabels()), "x")
     filter_tick_labels_to_fit(list(matrix_axis.get_yticklabels()), "y")
@@ -662,6 +691,7 @@ def draw_legend(
     compact: bool,
     height_fraction: float,
     top_padding: float,
+    include_title: bool = True,
 ) -> None:
     """Draw a compact boxed legend in its own axis."""
     legend_breaks = build_legend_breaks(lower_threshold, upper_threshold)
@@ -713,16 +743,17 @@ def draw_legend(
             color="#303030",
         )
 
-    axis.text(
-        legend_left - 0.19,
-        (legend_top + legend_bottom) / 2,
-        "Raw value",
-        ha="center",
-        va="center",
-        rotation=90,
-        fontsize=6,
-        color="#303030",
-    )
+    if include_title:
+        axis.text(
+            legend_left - 0.19,
+            (legend_top + legend_bottom) / 2,
+            "Raw value",
+            ha="center",
+            va="center",
+            rotation=90,
+            fontsize=6,
+            color="#303030",
+        )
 
 def render_simple_figure(
     matrix_values: np.ndarray,
@@ -781,6 +812,7 @@ def render_clustered_figure(
     ordered_indices = dendrogram_info["leaves"]
     ordered_matrix = matrix_values[np.ix_(ordered_indices, ordered_indices)]
     ordered_names = [genome_names[index] for index in ordered_indices]
+    show_all_labels = should_render_sample_labels(len(ordered_names))
 
     base_dimensions = derive_clustered_base_dimensions(len(ordered_names))
     safety_pad_in = 0.08
@@ -819,6 +851,7 @@ def render_clustered_figure(
         compact=True,
         height_fraction=0.28,
         top_padding=0.04,
+        include_title=False,
     )
     draw_matrix(
         matrix_axis,
@@ -830,18 +863,11 @@ def render_clustered_figure(
         row_labels_right=True,
     )
     figure.canvas.draw()
-    right_overhang_in, bottom_overhang_in = measure_axis_label_overhangs(
+    final_layout, right_overhang_in, bottom_overhang_in = expand_figure_for_labels(
         figure,
         matrix_axis,
-    )
-    final_layout = derive_clustered_layout(
         base_dimensions,
-        right_pad_in=(
-            base_dimensions["min_right_pad_in"] + right_overhang_in + safety_pad_in
-        ),
-        bottom_pad_in=(
-            base_dimensions["min_bottom_pad_in"] + bottom_overhang_in + safety_pad_in
-        ),
+        safety_pad_in,
     )
     figure.set_size_inches(
         final_layout["figure_width_in"],
@@ -865,7 +891,36 @@ def render_clustered_figure(
         ]
     )
     figure.canvas.draw()
-    prune_clustered_labels(figure, matrix_axis)
+    if show_all_labels:
+        final_layout, _, _ = expand_figure_for_labels(
+            figure,
+            matrix_axis,
+            base_dimensions,
+            safety_pad_in,
+        )
+        figure.set_size_inches(
+            final_layout["figure_width_in"],
+            final_layout["figure_height_in"],
+            forward=True,
+        )
+        legend_axis.set_position(
+            [
+                final_layout["legend_left"],
+                final_layout["legend_bottom"],
+                final_layout["legend_width"],
+                final_layout["legend_height"],
+            ]
+        )
+        matrix_axis.set_position(
+            [
+                final_layout["matrix_left"],
+                final_layout["matrix_bottom"],
+                final_layout["matrix_width"],
+                final_layout["matrix_height"],
+            ]
+        )
+    figure.canvas.draw()
+    prune_clustered_labels(figure, matrix_axis, show_all_labels)
     figure.canvas.draw()
     matrix_position = matrix_axis.get_position()
 
@@ -891,7 +946,6 @@ def render_clustered_figure(
         leaf_count=len(ordered_names),
         orientation="top",
     )
-    top_axis.set_title(matrix_label, fontsize=7.5, pad=2)
     draw_manual_dendrogram(
         left_axis,
         dendrogram_info,
