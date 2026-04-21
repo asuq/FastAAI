@@ -1087,9 +1087,9 @@ def select_representative_for_indices(
       6) lexicographically smallest Accession.
 
     Weights by profile (sum is not required to be 1):
-      - default: A=3.0, Q=2.0, B=1.5, N=0.75, S=0.50, C=0.50
-      - isolate: A=3.5, Q=1.5, B=1.5, N=1.00, S=0.25, C=0.50
-      - mag    : A=1.0, Q=3.0, B=2.0, N=0.50, S=1.50, C=0.50
+      - default: A=3.0, Q=2.0, B=1.5, N=0.75, S=0.50, C=0.05
+      - isolate: A=3.5, Q=1.5, B=1.5, N=1.00, S=0.25, C=0.05
+      - mag    : A=1.0, Q=3.0, B=2.0, N=0.50, S=1.50, C=0.05
     """
     import numpy as np  # local import for type name
 
@@ -1181,11 +1181,11 @@ def select_representative_for_indices(
 
     ## Weights ================================================================
     if score_profile == "isolate":
-        wA, wQ, wB, wN, wS, wC = 3.5, 1.5, 1.5, 1.00, 0.25, 0.50
+        wA, wQ, wB, wN, wS, wC = 3.5, 1.5, 1.5, 1.00, 0.25, 0.05
     elif score_profile == "mag":
-        wA, wQ, wB, wN, wS, wC = 1.0, 3.0, 2.0, 0.50, 1.50, 0.50
+        wA, wQ, wB, wN, wS, wC = 1.0, 3.0, 2.0, 0.50, 1.50, 0.05
     else:  # default
-        wA, wQ, wB, wN, wS, wC = 3.0, 2.0, 1.5, 0.75, 0.50, 0.50
+        wA, wQ, wB, wN, wS, wC = 3.0, 2.0, 1.5, 0.75, 0.50, 0.05
 
     ## Score per candidate ====================================================
 
