@@ -1,12 +1,16 @@
-"""Tests for the FastAAI R heatmap helper."""
+"""Tests for the FastAAI Python heatmap helper."""
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +27,23 @@ EXPECTED_OUTPUTS = (
     "FastAAI_matrix_heatmap_simple.svg",
     "FastAAI_matrix_heatmap_simple.png",
 )
+TEST_ENV = {
+    **os.environ,
+    "MPLCONFIGDIR": "/tmp/fastaai_mplconfig",
+}
+
+
+def load_visualiser_module():
+    """Load the visualiser script as a Python module for helper tests."""
+    spec = importlib.util.spec_from_file_location("visualise_aai_matrix", SCRIPT_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load module from {SCRIPT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+VISUALISER_MODULE = load_visualiser_module()
 
 
 def write_text(path: Path, content: str) -> None:
@@ -38,6 +59,7 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        env=TEST_ENV,
     )
 
 
@@ -49,6 +71,7 @@ def refresh_visualiser_assets() -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        env=TEST_ENV,
     )
 
 
@@ -72,6 +95,7 @@ def run_visualiser_with_thresholds(
         capture_output=True,
         text=True,
         check=False,
+        env=TEST_ENV,
     )
 
 
@@ -172,6 +196,45 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         for genome_count, keep in expected.items():
             with self.subTest(genome_count=genome_count):
                 self.assertEqual(expected_label_indices(genome_count), keep)
+
+    def test_get_heatmap_extent_uses_half_cell_edges(self) -> None:
+        """Return image bounds that keep integer indices at cell centres."""
+        self.assertEqual(
+            VISUALISER_MODULE.get_heatmap_extent(20),
+            (-0.5, 19.5, 19.5, -0.5),
+        )
+
+    def test_build_dendrogram_segments_maps_scipy_positions_to_integer_centres(self) -> None:
+        """Map SciPy dendrogram leaf coordinates onto integer cell centres."""
+        segments = VISUALISER_MODULE.build_dendrogram_segments(
+            icoord=[[5.0, 5.0, 15.0, 15.0]],
+            dcoord=[[0.0, 2.0, 2.0, 0.0]],
+            orientation="top",
+        )
+        self.assertEqual(segments[0][:, 0].tolist(), [0.0, 0.0, 1.0, 1.0])
+
+    def test_apply_dendrogram_limits_uses_heatmap_edge_span(self) -> None:
+        """Use the matrix edge span rather than centre span for dendrogram axes."""
+        figure, axes = plt.subplots(1, 2)
+        try:
+            VISUALISER_MODULE.apply_dendrogram_limits(
+                axes[0],
+                leaf_count=20,
+                max_height=7.5,
+                orientation="top",
+            )
+            VISUALISER_MODULE.apply_dendrogram_limits(
+                axes[1],
+                leaf_count=20,
+                max_height=7.5,
+                orientation="left",
+            )
+            self.assertEqual(axes[0].get_xlim(), (-0.5, 19.5))
+            self.assertEqual(axes[0].get_ylim(), (0.0, 7.5))
+            self.assertEqual(axes[1].get_xlim(), (7.5, 0.0))
+            self.assertEqual(axes[1].get_ylim(), (19.5, -0.5))
+        finally:
+            plt.close(figure)
 
     def test_visualiser_rejects_missing_query_genome_header(self) -> None:
         """Reject matrices without the FastAAI header marker."""

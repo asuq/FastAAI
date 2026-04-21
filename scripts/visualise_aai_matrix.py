@@ -242,6 +242,11 @@ def build_legend_breaks(lower_threshold: float, upper_threshold: float) -> list[
     return sorted({lower_threshold, midpoint, upper_threshold})
 
 
+def get_heatmap_extent(leaf_count: int) -> tuple[float, float, float, float]:
+    """Return the explicit image extent for a square heatmap."""
+    return (-0.5, leaf_count - 0.5, leaf_count - 0.5, -0.5)
+
+
 def configure_matrix_axis(
     axis: plt.Axes,
     genome_names: list[str],
@@ -299,10 +304,12 @@ def draw_matrix(
     row_labels_right: bool = False,
 ) -> None:
     """Render a heatmap matrix panel."""
+    heatmap_extent = get_heatmap_extent(len(genome_names))
     axis.imshow(
         matrix_values,
         cmap=cmap,
         norm=norm,
+        extent=heatmap_extent,
         interpolation="nearest",
         origin="upper",
         aspect="equal",
@@ -316,12 +323,19 @@ def draw_matrix(
     )
 
 
-def draw_simple_matrix(axis: plt.Axes, matrix_values: np.ndarray, cmap: colors.Colormap, norm: colors.Normalize) -> None:
+def draw_simple_matrix(
+    axis: plt.Axes,
+    matrix_values: np.ndarray,
+    cmap: colors.Colormap,
+    norm: colors.Normalize,
+) -> None:
     """Render the simple matrix without labels."""
+    heatmap_extent = get_heatmap_extent(matrix_values.shape[0])
     axis.imshow(
         matrix_values,
         cmap=cmap,
         norm=norm,
+        extent=heatmap_extent,
         interpolation="nearest",
         origin="upper",
         aspect="equal",
@@ -345,7 +359,6 @@ def style_dendrogram_axis(axis: plt.Axes) -> None:
 def build_dendrogram_segments(
     icoord: list[list[float]],
     dcoord: list[list[float]],
-    leaf_count: int,
     orientation: str,
 ) -> list[np.ndarray]:
     """Convert SciPy dendrogram coordinates to matrix-centred segments."""
@@ -369,6 +382,27 @@ def build_dendrogram_segments(
     return segments
 
 
+def apply_dendrogram_limits(
+    axis: plt.Axes,
+    leaf_count: int,
+    max_height: float,
+    orientation: str,
+) -> None:
+    """Apply matrix-aligned bounds to a dendrogram axis."""
+    left_edge, right_edge, bottom_edge, top_edge = get_heatmap_extent(leaf_count)
+    if orientation == "top":
+        axis.set_xlim(left_edge, right_edge)
+        axis.set_ylim(0.0, max_height)
+    elif orientation == "left":
+        axis.set_xlim(max_height, 0.0)
+        axis.set_ylim(bottom_edge, top_edge)
+    else:
+        raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
+
+    axis.margins(x=0, y=0)
+    axis.set_autoscale_on(False)
+
+
 def draw_manual_dendrogram(
     axis: plt.Axes,
     dendrogram_info: dict[str, list],
@@ -379,7 +413,6 @@ def draw_manual_dendrogram(
     segments = build_dendrogram_segments(
         dendrogram_info["icoord"],
         dendrogram_info["dcoord"],
-        leaf_count,
         orientation,
     )
     branch_collection = LineCollection(
@@ -392,17 +425,7 @@ def draw_manual_dendrogram(
     axis.add_collection(branch_collection)
 
     max_height = max(max(row) for row in dendrogram_info["dcoord"])
-    if orientation == "top":
-        axis.set_xlim(0.0, leaf_count - 1.0)
-        axis.set_ylim(0.0, max_height)
-        axis.margins(x=0, y=0)
-    elif orientation == "left":
-        axis.set_xlim(max_height, 0.0)
-        axis.set_ylim(leaf_count - 1.0, 0.0)
-        axis.margins(x=0, y=0)
-    else:
-        raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
-
+    apply_dendrogram_limits(axis, leaf_count, max_height, orientation)
     style_dendrogram_axis(axis)
 
 
