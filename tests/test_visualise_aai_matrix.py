@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.R"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.py"
 ASSET_HELPER_PATH = REPO_ROOT / "tests" / "generate_visualiser_test_assets.py"
 REAL_MATRIX_PATH = REPO_ROOT / "tests" / "data" / "matrix.tsv"
 MATRIX_20_PATH = REPO_ROOT / "tests" / "data" / "matrix_20.tsv"
@@ -30,9 +31,9 @@ def write_text(path: Path, content: str) -> None:
 
 
 def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
-    """Run the R heatmap helper for a given matrix path."""
+    """Run the Python heatmap helper for a given matrix path."""
     return subprocess.run(
-        ["Rscript", str(SCRIPT_PATH), str(matrix_path)],
+        [sys.executable, str(SCRIPT_PATH), str(matrix_path)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -43,7 +44,7 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
 def refresh_visualiser_assets() -> subprocess.CompletedProcess[str]:
     """Regenerate stable test matrices and figures under tests/."""
     return subprocess.run(
-        ["python3", str(ASSET_HELPER_PATH)],
+        [sys.executable, str(ASSET_HELPER_PATH)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -56,10 +57,10 @@ def run_visualiser_with_thresholds(
     lower_threshold: float,
     upper_threshold: float,
 ) -> subprocess.CompletedProcess[str]:
-    """Run the R heatmap helper with explicit heatmap thresholds."""
+    """Run the Python heatmap helper with explicit heatmap thresholds."""
     return subprocess.run(
         [
-            "Rscript",
+            sys.executable,
             str(SCRIPT_PATH),
             "--lower-threshold",
             str(lower_threshold),
@@ -92,7 +93,7 @@ def expected_label_indices(genome_count: int) -> list[int]:
 
 
 class VisualiseAAIMatrixTests(unittest.TestCase):
-    """Verify the R helper accepts raw FastAAI matrices and rejects malformed ones."""
+    """Verify the Python helper accepts raw FastAAI matrices and rejects malformed ones."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -118,6 +119,14 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         simple_svg_path = FIGURES_DIR / "matrix_20" / "FastAAI_matrix_heatmap_simple.svg"
         svg_text = simple_svg_path.read_text(encoding="utf-8")
         self.assertGreater(simple_svg_path.stat().st_size, 5000)
+        self.assertIn("<image", svg_text)
+
+    def test_clustered_svg_contains_matrix_and_legend_elements(self) -> None:
+        """Ensure the clustered SVG contains matrix raster content and legend text."""
+        clustered_svg_path = FIGURES_DIR / "matrix_20" / "FastAAI_matrix_heatmap.svg"
+        svg_text = clustered_svg_path.read_text(encoding="utf-8")
+        self.assertIn("<image", svg_text)
+        self.assertIn("Raw value", svg_text)
         self.assertGreater(svg_text.count("<path"), 5)
 
     def test_visualiser_accepts_custom_heatmap_thresholds(self) -> None:
