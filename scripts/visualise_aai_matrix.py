@@ -63,8 +63,16 @@ def parse_args() -> argparse.Namespace:
         default=100.0,
         help="Upper heatmap threshold for colour clipping.",
     )
+    parser.add_argument(
+        "--colour-palette",
+        "--color-palette",
+        dest="colour_palette",
+        default="magma",
+        help="Matplotlib colour palette name for the heatmaps.",
+    )
     args = parser.parse_args()
     validate_thresholds(args.lower_threshold, args.upper_threshold)
+    validate_colour_palette(args.colour_palette)
     return args
 
 
@@ -78,6 +86,15 @@ def validate_thresholds(lower_threshold: float, upper_threshold: float) -> None:
         die(
             "Lower threshold must be smaller than upper threshold, "
             f"got: {lower_threshold} >= {upper_threshold}"
+        )
+
+
+def validate_colour_palette(colour_palette: str) -> None:
+    """Validate the requested Matplotlib colour palette name."""
+    if colour_palette not in plt.colormaps():
+        die(
+            "Unknown Matplotlib colour palette: "
+            f"'{colour_palette}'. Choose one of: {', '.join(sorted(plt.colormaps()))}"
         )
 
 
@@ -279,9 +296,9 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
     }
 
 
-def build_colormap() -> colors.Colormap:
+def build_colormap(colour_palette: str) -> colors.Colormap:
     """Build the shared FastAAI heatmap palette."""
-    return plt.get_cmap("magma").copy()
+    return plt.get_cmap(colour_palette).copy()
 
 
 def build_legend_breaks(lower_threshold: float, upper_threshold: float) -> list[float]:
@@ -750,9 +767,10 @@ def render_simple_figure(
     output_path: Path,
     lower_threshold: float,
     upper_threshold: float,
+    colour_palette: str,
 ) -> None:
     """Render the simple matrix-only figure."""
-    cmap = build_colormap()
+    cmap = build_colormap(colour_palette)
     norm = colors.Normalize(vmin=lower_threshold, vmax=upper_threshold, clip=True)
     figure = plt.figure(figsize=(derive_device_size(matrix_values.shape[0], simple=True),) * 2)
     grid = GridSpec(
@@ -792,9 +810,10 @@ def render_clustered_figure(
     matrix_label: str,
     lower_threshold: float,
     upper_threshold: float,
+    colour_palette: str,
 ) -> None:
     """Render the clustered heatmap figure."""
-    cmap = build_colormap()
+    cmap = build_colormap(colour_palette)
     norm = colors.Normalize(vmin=lower_threshold, vmax=upper_threshold, clip=True)
     condensed_distance = build_distance_condensed(matrix_values)
     linkage_matrix = linkage(condensed_distance, method="complete")
@@ -928,6 +947,7 @@ def write_outputs(
     matrix_path: Path,
     lower_threshold: float,
     upper_threshold: float,
+    colour_palette: str,
 ) -> None:
     """Render clustered and simple SVG and PNG outputs beside the input matrix."""
     output_dir = matrix_path.parent
@@ -944,6 +964,7 @@ def write_outputs(
         matrix_label,
         lower_threshold,
         upper_threshold,
+        colour_palette,
     )
     render_clustered_figure(
         genome_names,
@@ -952,9 +973,22 @@ def write_outputs(
         matrix_label,
         lower_threshold,
         upper_threshold,
+        colour_palette,
     )
-    render_simple_figure(matrix_values, simple_svg_path, lower_threshold, upper_threshold)
-    render_simple_figure(matrix_values, simple_png_path, lower_threshold, upper_threshold)
+    render_simple_figure(
+        matrix_values,
+        simple_svg_path,
+        lower_threshold,
+        upper_threshold,
+        colour_palette,
+    )
+    render_simple_figure(
+        matrix_values,
+        simple_png_path,
+        lower_threshold,
+        upper_threshold,
+        colour_palette,
+    )
 
     for output_path in (
         clustered_svg_path,
@@ -977,6 +1011,7 @@ def main() -> int:
         matrix_path,
         args.lower_threshold,
         args.upper_threshold,
+        args.colour_palette,
     )
     return 0
 
