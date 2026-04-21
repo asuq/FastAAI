@@ -246,6 +246,7 @@ def configure_matrix_axis(
     genome_names: list[str],
     label_size: float,
     show_grid: bool,
+    row_labels_right: bool = False,
 ) -> None:
     """Apply shared axis styling for a heatmap matrix."""
     positions = np.arange(len(genome_names))
@@ -254,6 +255,28 @@ def configure_matrix_axis(
     axis.set_xticklabels(build_axis_labels(genome_names), rotation=90, fontsize=label_size)
     axis.set_yticklabels(build_axis_labels(genome_names), fontsize=label_size)
     axis.tick_params(length=0)
+    if row_labels_right:
+        axis.yaxis.tick_right()
+        axis.tick_params(
+            axis="y",
+            labelleft=False,
+            left=False,
+            labelright=True,
+            right=False,
+            pad=2,
+        )
+        for label in axis.get_yticklabels():
+            label.set_horizontalalignment("left")
+    else:
+        axis.yaxis.tick_left()
+        axis.tick_params(
+            axis="y",
+            labelleft=True,
+            left=False,
+            labelright=False,
+            right=False,
+            pad=2,
+        )
     if show_grid:
         axis.set_xticks(np.arange(-0.5, len(genome_names), 1), minor=True)
         axis.set_yticks(np.arange(-0.5, len(genome_names), 1), minor=True)
@@ -272,6 +295,7 @@ def draw_matrix(
     norm: colors.Normalize,
     genome_names: list[str],
     show_grid: bool,
+    row_labels_right: bool = False,
 ) -> None:
     """Render a heatmap matrix panel."""
     axis.imshow(
@@ -287,6 +311,7 @@ def draw_matrix(
         genome_names,
         derive_label_size(len(genome_names)),
         show_grid,
+        row_labels_right=row_labels_right,
     )
 
 
@@ -468,12 +493,12 @@ def render_clustered_figure(
     grid = GridSpec(
         2,
         3,
-        width_ratios=[1.6, 1.2, 12.0],
+        width_ratios=[1.6, 0.9, 12.0],
         height_ratios=[1.1, 12.0],
-        wspace=0.04,
+        wspace=0.0,
         hspace=0.04,
         left=0.04,
-        right=0.995,
+        right=0.84,
         bottom=0.08,
         top=0.985,
         figure=figure,
@@ -520,7 +545,9 @@ def render_clustered_figure(
         norm,
         ordered_names,
         show_grid=len(ordered_names) <= 75,
+        row_labels_right=True,
     )
+    left_axis.set_ylim(matrix_axis.get_ylim())
 
     figure.savefig(output_path, facecolor="white")
     plt.close(figure)
