@@ -227,19 +227,17 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
     """Return compact baseline clustered layout dimensions in inches."""
     base_square_in = derive_device_size(genome_count, simple=False)
     left_outer_pad_in = max(0.12, min(0.2, base_square_in * 0.015))
-    legend_width_in = max(0.4, min(0.7, base_square_in * 0.05))
-    legend_gap_in = max(0.12, min(0.18, base_square_in * 0.015))
+    legend_width_in = max(0.7, min(1.1, base_square_in * 0.08))
     left_dendrogram_width_in = max(0.4, min(0.7, base_square_in * 0.05))
     min_right_pad_in = max(0.1, min(0.16, base_square_in * 0.012))
     min_bottom_pad_in = max(0.1, min(0.16, base_square_in * 0.012))
     top_outer_pad_in = max(0.08, min(0.14, base_square_in * 0.01))
-    title_pad_in = 0.18
-    top_left_gap_in = max(0.08, min(0.14, base_square_in * 0.01))
-    legend_height_in = max(0.55, min(0.95, base_square_in * 0.07))
+    legend_height_in = max(0.95, min(1.5, base_square_in * 0.12))
+    left_column_width_in = max(left_dendrogram_width_in, legend_width_in)
 
     left_content_in = (
         left_outer_pad_in
-        + left_dendrogram_width_in
+        + left_column_width_in
     )
     provisional_matrix_side_in = base_square_in - left_content_in - min_right_pad_in
     top_dendrogram_height_in = (
@@ -247,7 +245,7 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
         * base_square_in
     )
     top_band_height_in = max(
-        top_dendrogram_height_in + title_pad_in,
+        top_dendrogram_height_in,
         legend_height_in,
     )
     top_content_in = top_outer_pad_in + top_band_height_in
@@ -260,31 +258,22 @@ def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
         * base_square_in
     )
     top_band_height_in = max(
-        top_dendrogram_height_in + title_pad_in,
+        top_dendrogram_height_in,
         legend_height_in,
     )
     top_content_in = top_outer_pad_in + top_band_height_in
-    top_left_content_in = (
-        left_outer_pad_in
-        + legend_width_in
-        + top_left_gap_in
-        + left_dendrogram_width_in
-    )
 
     return {
         "base_square_in": base_square_in,
         "left_outer_pad_in": left_outer_pad_in,
         "legend_width_in": legend_width_in,
-        "legend_gap_in": legend_gap_in,
         "left_dendrogram_width_in": left_dendrogram_width_in,
+        "left_column_width_in": left_column_width_in,
         "min_right_pad_in": min_right_pad_in,
         "min_bottom_pad_in": min_bottom_pad_in,
         "top_outer_pad_in": top_outer_pad_in,
-        "title_pad_in": title_pad_in,
-        "top_left_gap_in": top_left_gap_in,
         "legend_height_in": legend_height_in,
         "left_content_in": left_content_in,
-        "top_left_content_in": top_left_content_in,
         "top_band_height_in": top_band_height_in,
         "top_content_in": top_content_in,
         "matrix_side_in": matrix_side_in,
@@ -523,18 +512,33 @@ def expand_figure_for_labels(
     base_dimensions: dict[str, float],
     safety_pad_in: float,
 ) -> tuple[dict[str, float], float, float]:
-    """Expand the clustered figure until right and bottom labels fit."""
+    """Expand the clustered figure without shrinking an already fitted layout."""
     right_overhang_in, bottom_overhang_in = measure_axis_label_overhangs(
         figure,
         matrix_axis,
     )
+    current_width_in, current_height_in = figure.get_size_inches()
+    current_right_pad_in = max(
+        base_dimensions["min_right_pad_in"],
+        current_width_in
+        - base_dimensions["left_content_in"]
+        - base_dimensions["matrix_side_in"],
+    )
+    current_bottom_pad_in = max(
+        base_dimensions["min_bottom_pad_in"],
+        current_height_in
+        - base_dimensions["top_content_in"]
+        - base_dimensions["matrix_side_in"],
+    )
     final_layout = derive_clustered_layout(
         base_dimensions,
-        right_pad_in=(
-            base_dimensions["min_right_pad_in"] + right_overhang_in + safety_pad_in
+        right_pad_in=max(
+            current_right_pad_in,
+            base_dimensions["min_right_pad_in"] + right_overhang_in + safety_pad_in,
         ),
-        bottom_pad_in=(
-            base_dimensions["min_bottom_pad_in"] + bottom_overhang_in + safety_pad_in
+        bottom_pad_in=max(
+            current_bottom_pad_in,
+            base_dimensions["min_bottom_pad_in"] + bottom_overhang_in + safety_pad_in,
         ),
     )
     return final_layout, right_overhang_in, bottom_overhang_in
@@ -566,23 +570,16 @@ def derive_clustered_layout(
 
     matrix_left_in = (
         base_dimensions["left_outer_pad_in"]
-        + base_dimensions["left_dendrogram_width_in"]
+        + base_dimensions["left_column_width_in"]
     )
     matrix_left = matrix_left_in / figure_width_in
     matrix_bottom = bottom_pad_in / figure_height_in
     matrix_width = matrix_side_in / figure_width_in
     matrix_height = matrix_side_in / figure_height_in
 
-    top_axis_left_in = (
-        base_dimensions["left_outer_pad_in"]
-        + base_dimensions["legend_width_in"]
-        + base_dimensions["top_left_gap_in"]
-    )
-    top_axis_left = top_axis_left_in / figure_width_in
+    top_axis_left = matrix_left
     top_axis_bottom = (bottom_pad_in + matrix_side_in) / figure_height_in
-    top_axis_width = (
-        matrix_side_in - base_dimensions["legend_width_in"] - base_dimensions["top_left_gap_in"]
-    ) / figure_width_in
+    top_axis_width = matrix_width
     top_axis_height = base_dimensions["top_dendrogram_height_in"] / figure_height_in
 
     left_axis_left = (
@@ -698,8 +695,8 @@ def draw_legend(
     legend_height = min(max(height_fraction, 0.1), 0.95)
     legend_top = min(max(1.0 - top_padding, legend_height), 1.0)
     legend_bottom = legend_top - legend_height
-    legend_left = 0.48
-    legend_right = 0.72
+    legend_left = 0.42
+    legend_right = 0.78
     rectangle_edges = np.linspace(legend_bottom, legend_top, 257)
     value_positions = np.linspace(0.0, 1.0, 256)
 
@@ -849,8 +846,8 @@ def render_clustered_figure(
         lower_threshold,
         upper_threshold,
         compact=True,
-        height_fraction=0.28,
-        top_padding=0.04,
+        height_fraction=0.78,
+        top_padding=0.08,
         include_title=False,
     )
     draw_matrix(
@@ -863,36 +860,9 @@ def render_clustered_figure(
         row_labels_right=True,
     )
     figure.canvas.draw()
-    final_layout, right_overhang_in, bottom_overhang_in = expand_figure_for_labels(
-        figure,
-        matrix_axis,
-        base_dimensions,
-        safety_pad_in,
-    )
-    figure.set_size_inches(
-        final_layout["figure_width_in"],
-        final_layout["figure_height_in"],
-        forward=True,
-    )
-    legend_axis.set_position(
-        [
-            final_layout["legend_left"],
-            final_layout["legend_bottom"],
-            final_layout["legend_width"],
-            final_layout["legend_height"],
-        ]
-    )
-    matrix_axis.set_position(
-        [
-            final_layout["matrix_left"],
-            final_layout["matrix_bottom"],
-            final_layout["matrix_width"],
-            final_layout["matrix_height"],
-        ]
-    )
-    figure.canvas.draw()
-    if show_all_labels:
-        final_layout, _, _ = expand_figure_for_labels(
+    final_layout = provisional_layout
+    for _ in range(4):
+        final_layout, right_overhang_in, bottom_overhang_in = expand_figure_for_labels(
             figure,
             matrix_axis,
             base_dimensions,
@@ -919,10 +889,11 @@ def render_clustered_figure(
                 final_layout["matrix_height"],
             ]
         )
-    figure.canvas.draw()
+        figure.canvas.draw()
+        if right_overhang_in <= 0.01 and bottom_overhang_in <= 0.01:
+            break
     prune_clustered_labels(figure, matrix_axis, show_all_labels)
     figure.canvas.draw()
-    matrix_position = matrix_axis.get_position()
 
     top_axis = figure.add_axes(
         [
