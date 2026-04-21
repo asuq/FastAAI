@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from math import floor
+import os
 from pathlib import Path
 
 
@@ -28,6 +29,10 @@ RENDER_TARGETS = (
     ("matrix_100", MATRIX_100_PATH),
     ("matrix_full", FULL_MATRIX_PATH),
 )
+TEST_ENV = {
+    **os.environ,
+    "MPLCONFIGDIR": "/tmp/fastaai_mplconfig",
+}
 
 
 def load_matrix_rows(matrix_path: Path) -> list[list[str]]:
@@ -100,6 +105,7 @@ def run_visualiser(matrix_path: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        env=TEST_ENV,
     )
 
 
