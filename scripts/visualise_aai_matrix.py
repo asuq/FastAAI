@@ -393,13 +393,12 @@ def draw_manual_dendrogram(
 
     max_height = max(max(row) for row in dendrogram_info["dcoord"])
     if orientation == "top":
-        axis.set_xlim(-0.5, leaf_count - 0.5)
+        axis.set_xlim(0.0, leaf_count - 1.0)
         axis.set_ylim(0.0, max_height)
         axis.margins(x=0, y=0)
     elif orientation == "left":
         axis.set_xlim(max_height, 0.0)
-        axis.set_ylim(-0.5, leaf_count - 0.5)
-        axis.invert_yaxis()
+        axis.set_ylim(leaf_count - 1.0, 0.0)
         axis.margins(x=0, y=0)
     else:
         raise ValueError(f"Unsupported dendrogram orientation: {orientation}")
@@ -542,7 +541,7 @@ def render_clustered_figure(
         width_ratios=[1.6, 0.9, 12.0],
         height_ratios=[1.1, 12.0],
         wspace=0.0,
-        hspace=0.04,
+        hspace=0.0,
         left=0.04,
         right=0.84,
         bottom=0.08,
