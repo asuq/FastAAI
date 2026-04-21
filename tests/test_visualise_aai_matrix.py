@@ -213,21 +213,27 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         )
         self.assertEqual(VISUALISER_MODULE.derive_top_dendrogram_height(1.0), 0.07)
 
-    def test_prune_label_intervals_hides_out_of_bounds_labels(self) -> None:
-        """Drop labels that extend beyond the available figure bounds."""
+    def test_derive_clustered_base_dimensions_use_compact_left_and_top_space(self) -> None:
+        """Use smaller compact left and top content than the older fixed layout."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
+        base_square_in = base_dimensions["base_square_in"]
+        old_left_content_in = base_square_in * (0.04 + 0.05 + 0.02 + 0.05)
+        old_top_content_in = base_square_in * (0.03 + 0.07)
+
+        self.assertLess(base_dimensions["left_content_in"], old_left_content_in)
+        self.assertLess(base_dimensions["top_content_in"], old_top_content_in)
+
+    def test_prune_label_intervals_does_not_drop_clipped_labels_without_bounds(self) -> None:
+        """Do not hide intervals purely because they would clip before resizing."""
         keep_flags = VISUALISER_MODULE.prune_label_intervals(
             [(-2.0, 5.0), (6.0, 9.0), (9.5, 12.0)],
-            lower_bound=0.0,
-            upper_bound=10.0,
         )
-        self.assertEqual(keep_flags, [False, True, False])
+        self.assertEqual(keep_flags, [True, True, True])
 
     def test_prune_label_intervals_hides_overlapping_labels(self) -> None:
         """Drop labels that overlap the last kept label."""
         keep_flags = VISUALISER_MODULE.prune_label_intervals(
             [(0.0, 3.0), (2.5, 4.0), (4.1, 5.0)],
-            lower_bound=0.0,
-            upper_bound=10.0,
         )
         self.assertEqual(keep_flags, [True, False, True])
 
@@ -235,10 +241,86 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         """Keep labels that fit inside bounds without overlap."""
         keep_flags = VISUALISER_MODULE.prune_label_intervals(
             [(0.0, 2.0), (2.1, 3.0), (3.1, 5.0)],
-            lower_bound=0.0,
-            upper_bound=10.0,
         )
         self.assertEqual(keep_flags, [True, True, True])
+
+    def test_measure_axis_label_overhangs_detects_long_bottom_labels(self) -> None:
+        """Measure extra bottom space needed for long x labels."""
+        figure, axis = plt.subplots(figsize=(3.0, 3.0))
+        try:
+            axis.set_position([0.15, 0.12, 0.45, 0.45])
+            axis.set_xticks([0, 1])
+            axis.set_yticks([0, 1])
+            axis.set_xticklabels(
+                ["very_long_bottom_label_a", "very_long_bottom_label_b"],
+                rotation=90,
+                fontsize=8,
+            )
+            axis.set_yticklabels(["a", "b"], fontsize=8)
+            axis.yaxis.tick_right()
+            figure.canvas.draw()
+            right_overhang_in, bottom_overhang_in = (
+                VISUALISER_MODULE.measure_axis_label_overhangs(figure, axis)
+            )
+
+            self.assertEqual(right_overhang_in, 0.0)
+            self.assertGreater(bottom_overhang_in, 0.0)
+        finally:
+            plt.close(figure)
+
+    def test_measure_axis_label_overhangs_detects_long_right_labels(self) -> None:
+        """Measure extra right space needed for long y labels."""
+        figure, axis = plt.subplots(figsize=(3.0, 3.0))
+        try:
+            axis.set_position([0.15, 0.2, 0.45, 0.45])
+            axis.set_xticks([0, 1])
+            axis.set_yticks([0, 1])
+            axis.set_xticklabels(["a", "b"], rotation=90, fontsize=8)
+            axis.set_yticklabels(
+                ["very_long_right_label_a", "very_long_right_label_b"],
+                fontsize=8,
+            )
+            axis.yaxis.tick_right()
+            axis.tick_params(
+                axis="y",
+                labelleft=False,
+                left=False,
+                labelright=True,
+                right=False,
+                pad=2,
+            )
+            figure.canvas.draw()
+            right_overhang_in, bottom_overhang_in = (
+                VISUALISER_MODULE.measure_axis_label_overhangs(figure, axis)
+            )
+
+            self.assertGreater(right_overhang_in, 0.0)
+            self.assertEqual(bottom_overhang_in, 0.0)
+        finally:
+            plt.close(figure)
+
+    def test_derive_clustered_layout_expands_for_extra_label_space(self) -> None:
+        """Grow figure dimensions when measured label overhang increases."""
+        base_dimensions = VISUALISER_MODULE.derive_clustered_base_dimensions(100)
+        base_layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"],
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"],
+        )
+        expanded_layout = VISUALISER_MODULE.derive_clustered_layout(
+            base_dimensions,
+            right_pad_in=base_dimensions["min_right_pad_in"] + 0.5,
+            bottom_pad_in=base_dimensions["min_bottom_pad_in"] + 0.75,
+        )
+
+        self.assertGreater(
+            expanded_layout["figure_width_in"],
+            base_layout["figure_width_in"],
+        )
+        self.assertGreater(
+            expanded_layout["figure_height_in"],
+            base_layout["figure_height_in"],
+        )
 
     def test_build_dendrogram_segments_maps_scipy_positions_to_integer_centres(self) -> None:
         """Map SciPy dendrogram leaf coordinates onto integer cell centres."""
