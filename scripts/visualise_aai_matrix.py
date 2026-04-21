@@ -535,39 +535,27 @@ def render_clustered_figure(
     ordered_names = [genome_names[index] for index in ordered_indices]
 
     figure = plt.figure(figsize=(derive_device_size(matrix_values.shape[0], simple=False),) * 2)
-    grid = GridSpec(
-        2,
-        3,
-        width_ratios=[1.6, 0.9, 12.0],
-        height_ratios=[1.1, 12.0],
-        wspace=0.0,
-        hspace=0.0,
-        left=0.04,
-        right=0.84,
-        bottom=0.08,
-        top=0.985,
-        figure=figure,
-    )
 
-    top_axis = figure.add_subplot(grid[0, 2])
-    left_axis = figure.add_subplot(grid[1, 1])
-    legend_axis = figure.add_subplot(grid[1, 0])
-    matrix_axis = figure.add_subplot(grid[1, 2])
+    legend_left = 0.04
+    legend_width = 0.05
+    legend_gap = 0.02
+    left_dendrogram_width = 0.05
+    right_label_space = 0.16
+    bottom_label_space = 0.08
+    top_dendrogram_height = 0.12
+    top_margin = 0.03
 
-    draw_manual_dendrogram(
-        top_axis,
-        dendrogram_info,
-        leaf_count=len(ordered_names),
-        orientation="top",
-    )
-    top_axis.set_title(matrix_label, fontsize=7.5, pad=2)
-    draw_manual_dendrogram(
-        left_axis,
-        dendrogram_info,
-        leaf_count=len(ordered_names),
-        orientation="left",
-    )
+    matrix_left = legend_left + legend_width + legend_gap + left_dendrogram_width
+    max_matrix_width = 1.0 - right_label_space - matrix_left
+    max_matrix_height = 1.0 - top_margin - top_dendrogram_height - bottom_label_space
+    matrix_size = min(max_matrix_width, max_matrix_height)
 
+    legend_axis = figure.add_axes(
+        [legend_left, bottom_label_space, legend_width, matrix_size]
+    )
+    matrix_axis = figure.add_axes(
+        [matrix_left, bottom_label_space, matrix_size, matrix_size]
+    )
     draw_legend(
         legend_axis,
         cmap,
@@ -585,6 +573,38 @@ def render_clustered_figure(
         ordered_names,
         show_grid=len(ordered_names) <= 75,
         row_labels_right=True,
+    )
+    figure.canvas.draw()
+    matrix_position = matrix_axis.get_position()
+
+    top_axis = figure.add_axes(
+        [
+            matrix_position.x0,
+            matrix_position.y1,
+            matrix_position.width,
+            top_dendrogram_height,
+        ]
+    )
+    left_axis = figure.add_axes(
+        [
+            matrix_position.x0 - left_dendrogram_width,
+            matrix_position.y0,
+            left_dendrogram_width,
+            matrix_position.height,
+        ]
+    )
+    draw_manual_dendrogram(
+        top_axis,
+        dendrogram_info,
+        leaf_count=len(ordered_names),
+        orientation="top",
+    )
+    top_axis.set_title(matrix_label, fontsize=7.5, pad=2)
+    draw_manual_dendrogram(
+        left_axis,
+        dendrogram_info,
+        leaf_count=len(ordered_names),
+        orientation="left",
     )
 
     figure.savefig(output_path, facecolor="white")
