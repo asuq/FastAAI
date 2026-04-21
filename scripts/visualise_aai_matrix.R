@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Visualise a raw FastAAI matrix as a clustered heatmap with dendrograms.
+# Visualise a raw FastAAI matrix as paired SVG heatmaps.
 # Usage:
 #   Rscript scripts/visualise_aai_matrix.R [FastAAI_matrix.txt]
 #
@@ -199,14 +199,93 @@ derive_label_cex <- function(genome_count) {
   0.3
 }
 
-derive_device_size <- function(genome_count) {
-  # Choose a device size that grows with matrix size but stays bounded.
+derive_device_size <- function(genome_count, simple = FALSE) {
+  # Choose a square SVG size that keeps the matrix visible.
+  if (simple) {
+    size_inches <- 8 + genome_count * 0.025
+    return(max(8, min(32, size_inches)))
+  }
   size_inches <- 10 + genome_count * 0.03
   max(10, min(40, size_inches))
 }
 
-draw_heatmap <- function(matrix_values, matrix_label) {
-  # Draw a clustered heatmap with matched dendrograms and a FastAAI legend.
+build_palette <- function() {
+  # Return the shared FastAAI colour palette and legend ticks.
+  list(
+    colours = grDevices::colorRampPalette(
+      c("#f7fbff", "#dbe9f6", "#9ecae1", "#4292c6", "#2171b5", "#084594")
+    )(256),
+    breaks = c(0, 15, 30, 60, 90, 95)
+  )
+}
+
+draw_matrix_tiles <- function(matrix_values, palette_values, show_grid = FALSE) {
+  # Draw the matrix as SVG-safe vector tiles.
+  genome_count <- nrow(matrix_values)
+  image_values <- t(matrix_values[nrow(matrix_values):1, , drop = FALSE])
+  graphics::image(
+    x = seq_len(genome_count),
+    y = seq_len(genome_count),
+    z = image_values,
+    col = palette_values,
+    zlim = c(0, 95),
+    xaxt = "n",
+    yaxt = "n",
+    xlab = "",
+    ylab = "",
+    xaxs = "i",
+    yaxs = "i",
+    useRaster = FALSE
+  )
+  if (show_grid) {
+    graphics::abline(h = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff66", lwd = 0.35)
+    graphics::abline(v = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff66", lwd = 0.35)
+  }
+  graphics::box()
+}
+
+draw_legend <- function(palette_values, legend_breaks, compact = FALSE) {
+  # Draw a shared legend using vector tiles so it also renders cleanly in SVG.
+  legend_values <- seq(0, 95, length.out = length(palette_values))
+  graphics::image(
+    x = 1,
+    y = legend_values,
+    z = matrix(legend_values, nrow = 1),
+    col = palette_values,
+    xaxt = "n",
+    yaxt = "n",
+    xlab = "",
+    ylab = "",
+    xaxs = "i",
+    yaxs = "i",
+    useRaster = FALSE
+  )
+  graphics::axis(side = 4, at = legend_breaks, labels = legend_breaks, las = 2, cex.axis = 0.65)
+  graphics::mtext("Raw value", side = 4, line = 1.1, cex = 0.6)
+  if (compact) {
+    graphics::mtext("0 = no shared SCPs", side = 1, line = 0.8, cex = 0.5)
+    graphics::mtext("15 = <30%, 95 = >90%", side = 1, line = 1.7, cex = 0.5)
+  } else {
+    graphics::mtext("0 = no shared SCPs", side = 1, line = 1.0, cex = 0.55)
+    graphics::mtext("15 = <30%, 95 = >90%", side = 1, line = 2.0, cex = 0.55)
+  }
+}
+
+draw_simple_heatmap <- function(matrix_values) {
+  # Draw a matrix-only diagnostic heatmap with no labels or dendrograms.
+  palette <- build_palette()
+
+  graphics::layout(matrix(c(1, 2), nrow = 1), widths = c(18, 1.2))
+
+  graphics::par(mar = c(0.3, 0.3, 0.3, 0.3))
+  draw_matrix_tiles(matrix_values, palette$colours, show_grid = FALSE)
+
+  graphics::par(mar = c(1.8, 0.2, 0.2, 1.8))
+  draw_legend(palette$colours, palette$breaks, compact = TRUE)
+}
+
+draw_clustered_heatmap <- function(matrix_values, matrix_label) {
+  # Draw a clustered heatmap with dendrograms and thinned labels.
   genome_count <- nrow(matrix_values)
   distance_matrix <- build_distance_matrix(matrix_values)
   clustering <- hclust(distance_matrix, method = "complete")
@@ -215,13 +294,9 @@ draw_heatmap <- function(matrix_values, matrix_label) {
   dendrogram <- as.dendrogram(clustering)
   label_cex <- derive_label_cex(genome_count)
   axis_label_info <- build_axis_labels(colnames(ordered_matrix))
-  draw_grid <- genome_count <= 75
   matrix_margin <- if (axis_label_info$stride == 1) 4.5 else 3.5
-
-  palette_values <- grDevices::colorRampPalette(
-    c("#f7fbff", "#dbe9f6", "#9ecae1", "#4292c6", "#2171b5", "#084594")
-  )(256)
-  legend_breaks <- c(0, 15, 30, 60, 90, 95)
+  show_grid <- genome_count <= 75
+  palette <- build_palette()
 
   graphics::layout(
     matrix(c(0, 1, 0, 2, 3, 4), nrow = 2, byrow = TRUE),
@@ -240,21 +315,7 @@ draw_heatmap <- function(matrix_values, matrix_label) {
   graphics::plot(dendrogram, horiz = TRUE, axes = FALSE, yaxs = "i", leaflab = "none")
 
   graphics::par(mar = c(matrix_margin, matrix_margin, 0.4, 0.4))
-  image_values <- t(ordered_matrix[nrow(ordered_matrix):1, , drop = FALSE])
-  graphics::image(
-    x = seq_len(genome_count),
-    y = seq_len(genome_count),
-    z = image_values,
-    col = palette_values,
-    zlim = c(0, 95),
-    xaxt = "n",
-    yaxt = "n",
-    xlab = "",
-    ylab = "",
-    xaxs = "i",
-    yaxs = "i",
-    useRaster = TRUE
-  )
+  draw_matrix_tiles(ordered_matrix, palette$colours, show_grid = show_grid)
   graphics::axis(
     side = 1,
     at = seq_len(genome_count),
@@ -269,41 +330,36 @@ draw_heatmap <- function(matrix_values, matrix_label) {
     las = 2,
     cex.axis = label_cex
   )
-  if (draw_grid) {
-    graphics::abline(h = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff66", lwd = 0.35)
-    graphics::abline(v = seq(0.5, genome_count + 0.5, by = 1), col = "#ffffff66", lwd = 0.35)
-  }
-  graphics::box()
 
   graphics::par(mar = c(1.6, 0.2, 0.2, 1.8))
-  graphics::image(
-    x = 1,
-    y = seq(0, 95, length.out = length(palette_values)),
-    z = matrix(seq(0, 95, length.out = length(palette_values)), nrow = 1),
-    col = palette_values,
-    xaxt = "n",
-    yaxt = "n",
-    xlab = "",
-    ylab = ""
-  )
-  graphics::axis(side = 4, at = legend_breaks, labels = legend_breaks, las = 2, cex.axis = 0.65)
-  graphics::mtext("Raw value", side = 4, line = 1.1, cex = 0.6)
-  graphics::mtext("0 = no shared SCPs", side = 1, line = 0.8, cex = 0.5)
-  graphics::mtext("15 = <30%, 95 = >90%", side = 1, line = 1.7, cex = 0.5)
+  draw_legend(palette$colours, palette$breaks, compact = TRUE)
 }
 
 write_outputs <- function(matrix_values, matrix_path) {
-  # Render an SVG heatmap beside the input matrix.
+  # Render clustered and matrix-only SVG outputs beside the input matrix.
   output_dir <- dirname(matrix_path)
-  svg_path <- file.path(output_dir, "FastAAI_matrix_heatmap.svg")
-  figure_size <- derive_device_size(nrow(matrix_values))
+  clustered_svg_path <- file.path(output_dir, "FastAAI_matrix_heatmap.svg")
+  simple_svg_path <- file.path(output_dir, "FastAAI_matrix_heatmap_simple.svg")
   matrix_label <- basename(matrix_path)
 
-  grDevices::svg(svg_path, width = figure_size, height = figure_size)
-  draw_heatmap(matrix_values, matrix_label)
+  grDevices::svg(
+    clustered_svg_path,
+    width = derive_device_size(nrow(matrix_values), simple = FALSE),
+    height = derive_device_size(nrow(matrix_values), simple = FALSE)
+  )
+  draw_clustered_heatmap(matrix_values, matrix_label)
   grDevices::dev.off()
 
-  message(sprintf("Wrote %s", svg_path))
+  grDevices::svg(
+    simple_svg_path,
+    width = derive_device_size(nrow(matrix_values), simple = TRUE),
+    height = derive_device_size(nrow(matrix_values), simple = TRUE)
+  )
+  draw_simple_heatmap(matrix_values)
+  grDevices::dev.off()
+
+  message(sprintf("Wrote %s", clustered_svg_path))
+  message(sprintf("Wrote %s", simple_svg_path))
 }
 
 main <- function() {

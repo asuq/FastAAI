@@ -48,8 +48,8 @@ def expected_label_indices(genome_count: int) -> list[int]:
 class VisualiseAAIMatrixTests(unittest.TestCase):
     """Verify the R helper accepts raw FastAAI matrices and rejects malformed ones."""
 
-    def test_visualiser_writes_svg_for_valid_matrix(self) -> None:
-        """Create an SVG figure for a valid FastAAI-style matrix."""
+    def test_visualiser_writes_both_svgs_for_valid_matrix(self) -> None:
+        """Create both clustered and matrix-only SVG figures for a valid matrix."""
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             matrix_path = temp_path / "FastAAI_matrix.txt"
@@ -69,9 +69,38 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             result = run_visualiser(matrix_path)
 
             self.assertEqual(result.returncode, 0, msg=result.stderr)
-            svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
-            self.assertTrue(svg_path.is_file())
-            self.assertGreater(svg_path.stat().st_size, 0)
+            clustered_svg_path = temp_path / "FastAAI_matrix_heatmap.svg"
+            simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
+            self.assertTrue(clustered_svg_path.is_file())
+            self.assertTrue(simple_svg_path.is_file())
+            self.assertGreater(clustered_svg_path.stat().st_size, 0)
+            self.assertGreater(simple_svg_path.stat().st_size, 0)
+
+    def test_simple_svg_contains_matrix_draw_commands(self) -> None:
+        """Emit a simple SVG that is larger than an empty shell and contains draw paths."""
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            matrix_path = temp_path / "FastAAI_matrix.txt"
+            write_text(
+                matrix_path,
+                "\n".join(
+                    [
+                        "query_genome\tA\tB\tC",
+                        "A\t95\t68.75\t15",
+                        "B\t68.75\t95\t0",
+                        "C\t15\t0\t95",
+                    ]
+                )
+                + "\n",
+            )
+
+            result = run_visualiser(matrix_path)
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            simple_svg_path = temp_path / "FastAAI_matrix_heatmap_simple.svg"
+            svg_text = simple_svg_path.read_text(encoding="utf-8")
+            self.assertGreater(simple_svg_path.stat().st_size, 5000)
+            self.assertGreater(svg_text.count("<path"), 5)
 
     def test_expected_label_indices_follow_thinning_policy(self) -> None:
         """Keep every nth label with the first and last labels always preserved."""
