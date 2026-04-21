@@ -204,6 +204,42 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             (-0.5, 19.5, 19.5, -0.5),
         )
 
+    def test_derive_top_dendrogram_height_scales_with_matrix_size(self) -> None:
+        """Use a lower capped clustered top dendrogram height."""
+        self.assertEqual(VISUALISER_MODULE.derive_top_dendrogram_height(0.3), 0.045)
+        self.assertAlmostEqual(
+            VISUALISER_MODULE.derive_top_dendrogram_height(0.6),
+            0.054,
+        )
+        self.assertEqual(VISUALISER_MODULE.derive_top_dendrogram_height(1.0), 0.07)
+
+    def test_prune_label_intervals_hides_out_of_bounds_labels(self) -> None:
+        """Drop labels that extend beyond the available figure bounds."""
+        keep_flags = VISUALISER_MODULE.prune_label_intervals(
+            [(-2.0, 5.0), (6.0, 9.0), (9.5, 12.0)],
+            lower_bound=0.0,
+            upper_bound=10.0,
+        )
+        self.assertEqual(keep_flags, [False, True, False])
+
+    def test_prune_label_intervals_hides_overlapping_labels(self) -> None:
+        """Drop labels that overlap the last kept label."""
+        keep_flags = VISUALISER_MODULE.prune_label_intervals(
+            [(0.0, 3.0), (2.5, 4.0), (4.1, 5.0)],
+            lower_bound=0.0,
+            upper_bound=10.0,
+        )
+        self.assertEqual(keep_flags, [True, False, True])
+
+    def test_prune_label_intervals_preserves_cleanly_fitting_labels(self) -> None:
+        """Keep labels that fit inside bounds without overlap."""
+        keep_flags = VISUALISER_MODULE.prune_label_intervals(
+            [(0.0, 2.0), (2.1, 3.0), (3.1, 5.0)],
+            lower_bound=0.0,
+            upper_bound=10.0,
+        )
+        self.assertEqual(keep_flags, [True, True, True])
+
     def test_build_dendrogram_segments_maps_scipy_positions_to_integer_centres(self) -> None:
         """Map SciPy dendrogram leaf coordinates onto integer cell centres."""
         segments = VISUALISER_MODULE.build_dendrogram_segments(
