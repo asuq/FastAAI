@@ -232,6 +232,57 @@ def derive_top_dendrogram_height(matrix_size: float) -> float:
     return max(0.045, min(0.07, matrix_size * 0.09))
 
 
+def derive_clustered_base_dimensions(genome_count: int) -> dict[str, float]:
+    """Return compact baseline clustered layout dimensions in inches."""
+    base_square_in = derive_device_size(genome_count, simple=False)
+    left_outer_pad_in = max(0.12, min(0.2, base_square_in * 0.015))
+    legend_width_in = max(0.4, min(0.7, base_square_in * 0.05))
+    legend_gap_in = max(0.12, min(0.18, base_square_in * 0.015))
+    left_dendrogram_width_in = max(0.4, min(0.7, base_square_in * 0.05))
+    min_right_pad_in = max(0.1, min(0.16, base_square_in * 0.012))
+    min_bottom_pad_in = max(0.1, min(0.16, base_square_in * 0.012))
+    top_outer_pad_in = max(0.08, min(0.14, base_square_in * 0.01))
+    title_pad_in = 0.18
+
+    left_content_in = (
+        left_outer_pad_in
+        + legend_width_in
+        + legend_gap_in
+        + left_dendrogram_width_in
+    )
+    provisional_matrix_side_in = base_square_in - left_content_in - min_right_pad_in
+    top_dendrogram_height_in = (
+        derive_top_dendrogram_height(provisional_matrix_side_in / base_square_in)
+        * base_square_in
+    )
+    top_content_in = top_outer_pad_in + top_dendrogram_height_in + title_pad_in
+    matrix_side_in = min(
+        provisional_matrix_side_in,
+        base_square_in - top_content_in - min_bottom_pad_in,
+    )
+    top_dendrogram_height_in = (
+        derive_top_dendrogram_height(matrix_side_in / base_square_in)
+        * base_square_in
+    )
+    top_content_in = top_outer_pad_in + top_dendrogram_height_in + title_pad_in
+
+    return {
+        "base_square_in": base_square_in,
+        "left_outer_pad_in": left_outer_pad_in,
+        "legend_width_in": legend_width_in,
+        "legend_gap_in": legend_gap_in,
+        "left_dendrogram_width_in": left_dendrogram_width_in,
+        "min_right_pad_in": min_right_pad_in,
+        "min_bottom_pad_in": min_bottom_pad_in,
+        "top_outer_pad_in": top_outer_pad_in,
+        "title_pad_in": title_pad_in,
+        "left_content_in": left_content_in,
+        "top_content_in": top_content_in,
+        "matrix_side_in": matrix_side_in,
+        "top_dendrogram_height_in": top_dendrogram_height_in,
+    }
+
+
 def build_colormap() -> colors.LinearSegmentedColormap:
     """Build the shared FastAAI heatmap palette."""
     palette = sns.blend_palette(
@@ -255,14 +306,16 @@ def get_heatmap_extent(leaf_count: int) -> tuple[float, float, float, float]:
 
 def prune_label_intervals(
     intervals: list[tuple[float, float]],
-    lower_bound: float,
-    upper_bound: float,
+    lower_bound: float | None = None,
+    upper_bound: float | None = None,
 ) -> list[bool]:
-    """Keep only intervals that fit within bounds and do not overlap."""
+    """Keep intervals that fit optional bounds and do not overlap."""
     keep_flags: list[bool] = []
     last_kept_end: float | None = None
     for start, end in intervals:
-        fits_bounds = start >= lower_bound and end <= upper_bound
+        fits_lower_bound = lower_bound is None or start >= lower_bound
+        fits_upper_bound = upper_bound is None or end <= upper_bound
+        fits_bounds = fits_lower_bound and fits_upper_bound
         overlaps_previous = last_kept_end is not None and start < last_kept_end
         keep_label = fits_bounds and not overlaps_previous
         keep_flags.append(keep_label)
@@ -427,14 +480,101 @@ def apply_dendrogram_limits(
     axis.set_autoscale_on(False)
 
 
-def filter_tick_labels_to_fit(
+def measure_axis_label_overhangs(
     figure: plt.Figure,
+    matrix_axis: plt.Axes,
+) -> tuple[float, float]:
+    """Return right and bottom label overhang in inches."""
+    renderer = figure.canvas.get_renderer()
+    figure_box = figure.bbox
+    right_overhang_px = 0.0
+    bottom_overhang_px = 0.0
+
+    for label in matrix_axis.get_yticklabels():
+        if not label.get_text():
+            continue
+        bbox = label.get_window_extent(renderer=renderer)
+        right_overhang_px = max(right_overhang_px, bbox.x1 - figure_box.x1)
+
+    for label in matrix_axis.get_xticklabels():
+        if not label.get_text():
+            continue
+        bbox = label.get_window_extent(renderer=renderer)
+        bottom_overhang_px = max(bottom_overhang_px, figure_box.y0 - bbox.y0)
+
+    return (
+        max(0.0, right_overhang_px) / figure.dpi,
+        max(0.0, bottom_overhang_px) / figure.dpi,
+    )
+
+
+def derive_clustered_layout(
+    base_dimensions: dict[str, float],
+    right_pad_in: float,
+    bottom_pad_in: float,
+) -> dict[str, float]:
+    """Return final clustered figure size and axes positions."""
+    matrix_side_in = base_dimensions["matrix_side_in"]
+    left_content_in = base_dimensions["left_content_in"]
+    top_content_in = base_dimensions["top_content_in"]
+    figure_width_in = left_content_in + matrix_side_in + right_pad_in
+    figure_height_in = top_content_in + matrix_side_in + bottom_pad_in
+
+    legend_left = base_dimensions["left_outer_pad_in"] / figure_width_in
+    legend_bottom = bottom_pad_in / figure_height_in
+    legend_width = base_dimensions["legend_width_in"] / figure_width_in
+    legend_height = matrix_side_in / figure_height_in
+
+    matrix_left_in = (
+        base_dimensions["left_outer_pad_in"]
+        + base_dimensions["legend_width_in"]
+        + base_dimensions["legend_gap_in"]
+        + base_dimensions["left_dendrogram_width_in"]
+    )
+    matrix_left = matrix_left_in / figure_width_in
+    matrix_bottom = bottom_pad_in / figure_height_in
+    matrix_width = matrix_side_in / figure_width_in
+    matrix_height = matrix_side_in / figure_height_in
+
+    top_axis_left = matrix_left
+    top_axis_bottom = (bottom_pad_in + matrix_side_in) / figure_height_in
+    top_axis_width = matrix_width
+    top_axis_height = base_dimensions["top_dendrogram_height_in"] / figure_height_in
+
+    left_axis_left = (
+        matrix_left_in - base_dimensions["left_dendrogram_width_in"]
+    ) / figure_width_in
+    left_axis_bottom = matrix_bottom
+    left_axis_width = base_dimensions["left_dendrogram_width_in"] / figure_width_in
+    left_axis_height = matrix_height
+
+    return {
+        "figure_width_in": figure_width_in,
+        "figure_height_in": figure_height_in,
+        "legend_left": legend_left,
+        "legend_bottom": legend_bottom,
+        "legend_width": legend_width,
+        "legend_height": legend_height,
+        "matrix_left": matrix_left,
+        "matrix_bottom": matrix_bottom,
+        "matrix_width": matrix_width,
+        "matrix_height": matrix_height,
+        "top_axis_left": top_axis_left,
+        "top_axis_bottom": top_axis_bottom,
+        "top_axis_width": top_axis_width,
+        "top_axis_height": top_axis_height,
+        "left_axis_left": left_axis_left,
+        "left_axis_bottom": left_axis_bottom,
+        "left_axis_width": left_axis_width,
+        "left_axis_height": left_axis_height,
+    }
+
+
+def filter_tick_labels_to_fit(
     labels: list[Artist],
     axis_name: str,
 ) -> None:
-    """Hide tick labels that clip or overlap within the figure."""
-    renderer = figure.canvas.get_renderer()
-    figure_box = figure.bbox
+    """Hide only overlapping tick labels."""
     intervals: list[tuple[float, float]] = []
     visible_labels: list[Artist] = []
 
@@ -443,7 +583,7 @@ def filter_tick_labels_to_fit(
             label.set_visible(False)
             continue
         label.set_visible(True)
-        bbox = label.get_window_extent(renderer=renderer)
+        bbox = label.get_window_extent()
         if axis_name == "x":
             intervals.append((bbox.x0, bbox.x1))
         elif axis_name == "y":
@@ -452,10 +592,7 @@ def filter_tick_labels_to_fit(
             raise ValueError(f"Unsupported label axis: {axis_name}")
         visible_labels.append(label)
 
-    if axis_name == "x":
-        keep_flags = prune_label_intervals(intervals, figure_box.x0, figure_box.x1)
-    else:
-        keep_flags = prune_label_intervals(intervals, figure_box.y0, figure_box.y1)
+    keep_flags = prune_label_intervals(intervals)
 
     for label, keep_label in zip(visible_labels, keep_flags, strict=True):
         if not keep_label:
@@ -464,9 +601,10 @@ def filter_tick_labels_to_fit(
 
 
 def prune_clustered_labels(figure: plt.Figure, matrix_axis: plt.Axes) -> None:
-    """Hide clustered labels that do not fit within the figure."""
-    filter_tick_labels_to_fit(figure, list(matrix_axis.get_xticklabels()), "x")
-    filter_tick_labels_to_fit(figure, list(matrix_axis.get_yticklabels()), "y")
+    """Hide only overlapping clustered labels after layout expansion."""
+    figure.canvas.draw()
+    filter_tick_labels_to_fit(list(matrix_axis.get_xticklabels()), "x")
+    filter_tick_labels_to_fit(list(matrix_axis.get_yticklabels()), "y")
 
 
 def draw_manual_dendrogram(
@@ -623,30 +761,34 @@ def render_clustered_figure(
     ordered_matrix = matrix_values[np.ix_(ordered_indices, ordered_indices)]
     ordered_names = [genome_names[index] for index in ordered_indices]
 
-    figure = plt.figure(figsize=(derive_device_size(matrix_values.shape[0], simple=False),) * 2)
-
-    legend_left = 0.04
-    legend_width = 0.05
-    legend_gap = 0.02
-    left_dendrogram_width = 0.05
-    right_label_space = 0.16
-    bottom_label_space = 0.08
-    top_margin = 0.03
-
-    matrix_left = legend_left + legend_width + legend_gap + left_dendrogram_width
-    max_matrix_width = 1.0 - right_label_space - matrix_left
-    provisional_max_matrix_height = 1.0 - top_margin - 0.07 - bottom_label_space
-    matrix_size = min(max_matrix_width, provisional_max_matrix_height)
-    top_dendrogram_height = derive_top_dendrogram_height(matrix_size)
-    max_matrix_height = 1.0 - top_margin - top_dendrogram_height - bottom_label_space
-    matrix_size = min(max_matrix_width, max_matrix_height)
-    top_dendrogram_height = derive_top_dendrogram_height(matrix_size)
-
+    base_dimensions = derive_clustered_base_dimensions(len(ordered_names))
+    safety_pad_in = 0.08
+    provisional_layout = derive_clustered_layout(
+        base_dimensions,
+        right_pad_in=base_dimensions["min_right_pad_in"],
+        bottom_pad_in=base_dimensions["min_bottom_pad_in"],
+    )
+    figure = plt.figure(
+        figsize=(
+            provisional_layout["figure_width_in"],
+            provisional_layout["figure_height_in"],
+        )
+    )
     legend_axis = figure.add_axes(
-        [legend_left, bottom_label_space, legend_width, matrix_size]
+        [
+            provisional_layout["legend_left"],
+            provisional_layout["legend_bottom"],
+            provisional_layout["legend_width"],
+            provisional_layout["legend_height"],
+        ]
     )
     matrix_axis = figure.add_axes(
-        [matrix_left, bottom_label_space, matrix_size, matrix_size]
+        [
+            provisional_layout["matrix_left"],
+            provisional_layout["matrix_bottom"],
+            provisional_layout["matrix_width"],
+            provisional_layout["matrix_height"],
+        ]
     )
     draw_legend(
         legend_axis,
@@ -667,24 +809,59 @@ def render_clustered_figure(
         row_labels_right=True,
     )
     figure.canvas.draw()
+    right_overhang_in, bottom_overhang_in = measure_axis_label_overhangs(
+        figure,
+        matrix_axis,
+    )
+    final_layout = derive_clustered_layout(
+        base_dimensions,
+        right_pad_in=(
+            base_dimensions["min_right_pad_in"] + right_overhang_in + safety_pad_in
+        ),
+        bottom_pad_in=(
+            base_dimensions["min_bottom_pad_in"] + bottom_overhang_in + safety_pad_in
+        ),
+    )
+    figure.set_size_inches(
+        final_layout["figure_width_in"],
+        final_layout["figure_height_in"],
+        forward=True,
+    )
+    legend_axis.set_position(
+        [
+            final_layout["legend_left"],
+            final_layout["legend_bottom"],
+            final_layout["legend_width"],
+            final_layout["legend_height"],
+        ]
+    )
+    matrix_axis.set_position(
+        [
+            final_layout["matrix_left"],
+            final_layout["matrix_bottom"],
+            final_layout["matrix_width"],
+            final_layout["matrix_height"],
+        ]
+    )
+    figure.canvas.draw()
     prune_clustered_labels(figure, matrix_axis)
     figure.canvas.draw()
     matrix_position = matrix_axis.get_position()
 
     top_axis = figure.add_axes(
         [
-            matrix_position.x0,
-            matrix_position.y1,
-            matrix_position.width,
-            top_dendrogram_height,
+            final_layout["top_axis_left"],
+            final_layout["top_axis_bottom"],
+            final_layout["top_axis_width"],
+            final_layout["top_axis_height"],
         ]
     )
     left_axis = figure.add_axes(
         [
-            matrix_position.x0 - left_dendrogram_width,
-            matrix_position.y0,
-            left_dendrogram_width,
-            matrix_position.height,
+            final_layout["left_axis_left"],
+            final_layout["left_axis_bottom"],
+            final_layout["left_axis_width"],
+            final_layout["left_axis_height"],
         ]
     )
     draw_manual_dendrogram(
@@ -700,6 +877,7 @@ def render_clustered_figure(
         leaf_count=len(ordered_names),
         orientation="left",
     )
+    figure.canvas.draw()
 
     figure.savefig(output_path, facecolor="white")
     plt.close(figure)
