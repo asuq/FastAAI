@@ -141,8 +141,8 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
         svg_text = clustered_svg_path.read_text(encoding="utf-8")
         self.assertIn("<image", svg_text)
         self.assertIn(">40<", svg_text)
-        self.assertIn(">70<", svg_text)
-        self.assertIn(">100<", svg_text)
+        self.assertIn(">65<", svg_text)
+        self.assertIn(">90<", svg_text)
         self.assertGreater(svg_text.count("<path"), 5)
 
     def test_clustered_svg_omits_legend_title_and_matrix_filename(self) -> None:
@@ -262,6 +262,13 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             args = VISUALISER_MODULE.parse_args()
 
         self.assertEqual(args.colour_palette, "Blues")
+
+    def test_parse_args_defaults_upper_threshold_to_ninety(self) -> None:
+        """Default the CLI upper heatmap threshold to 90."""
+        with mock.patch("sys.argv", [str(SCRIPT_PATH), str(MATRIX_20_PATH)]):
+            args = VISUALISER_MODULE.parse_args()
+
+        self.assertEqual(args.upper_threshold, 90.0)
 
     def test_build_distance_condensed_uses_100_minus_identity(self) -> None:
         """Convert percent similarity values to percent distances from 100."""

@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--upper-threshold",
         type=float,
-        default=100.0,
+        default=90.0,
         help="Upper heatmap threshold for colour clipping.",
     )
     parser.add_argument(
