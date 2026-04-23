@@ -6,6 +6,7 @@ import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,7 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_PATH = Path("/Users/asuq/miniforge3/envs/fastaai-debug/bin/python")
+PYTHON_PATH = Path(sys.executable)
 SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.py"
 ASSET_HELPER_PATH = REPO_ROOT / "tests" / "generate_visualiser_test_assets.py"
 REAL_MATRIX_PATH = REPO_ROOT / "tests" / "data" / "matrix.tsv"

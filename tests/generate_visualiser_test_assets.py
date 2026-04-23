@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_PATH = Path("/Users/asuq/miniforge3/envs/fastaai-debug/bin/python")
+PYTHON_PATH = Path(sys.executable)
 SCRIPT_PATH = REPO_ROOT / "scripts" / "visualise_aai_matrix.py"
 DATA_DIR = REPO_ROOT / "tests" / "data"
 FIGURES_DIR = REPO_ROOT / "tests" / "figures"
