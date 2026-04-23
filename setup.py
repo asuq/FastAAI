@@ -19,9 +19,8 @@ setuptools.setup(
 		'numpy==2.2.2',
 		'pyrodigal==3.6.3',
 		'pyhmmer==0.11.0',
-		'matplotlib',
-		'scipy',
-		'seaborn',
+		'matplotlib==3.10.8',
+		'scipy==1.17.1',
 	],
 	entry_points={
 		"console_scripts": [
