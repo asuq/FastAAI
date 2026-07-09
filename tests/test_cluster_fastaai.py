@@ -28,6 +28,7 @@ normalise_threshold = CLUSTER_FASTAAI.normalise_threshold
 parse_args = CLUSTER_FASTAAI.parse_args
 run_pipeline = CLUSTER_FASTAAI.run_pipeline
 sanitise = CLUSTER_FASTAAI.sanitise
+taxonomic_level_for_threshold = CLUSTER_FASTAAI.taxonomic_level_for_threshold
 normalise_organism_name_for_alias = CLUSTER_FASTAAI.normalise_organism_name_for_alias
 select_representative_for_indices = CLUSTER_FASTAAI.select_representative_for_indices
 
@@ -689,8 +690,22 @@ class ClusterFastAAITests(unittest.TestCase):
 
     def test_normalise_threshold_accepts_fraction_and_percent(self) -> None:
         """Accept both supported threshold forms."""
-        self.assertAlmostEqual(normalise_threshold("0.9"), 0.9)
-        self.assertAlmostEqual(normalise_threshold("90"), 0.9)
+        for raw, expected in (
+            ("0.45", 0.45),
+            ("45", 0.45),
+            ("0.65", 0.65),
+            ("65", 0.65),
+            ("0.9", 0.9),
+            ("90", 0.9),
+        ):
+            with self.subTest(raw=raw):
+                self.assertAlmostEqual(normalise_threshold(raw), expected)
+
+    def test_taxonomic_level_recognises_strict_cutoffs(self) -> None:
+        """Label the configured genus and family AAI thresholds."""
+        self.assertEqual(taxonomic_level_for_threshold(0.65), "genus")
+        self.assertEqual(taxonomic_level_for_threshold(0.45), "family")
+        self.assertEqual(taxonomic_level_for_threshold(0.70), "custom")
 
     def test_normalise_threshold_rejects_invalid_values(self) -> None:
         """Reject unsupported threshold values."""
@@ -707,8 +722,8 @@ class ClusterFastAAITests(unittest.TestCase):
         self.assertIn("FastAAI", message)
         self.assertIn(">90% AAI values to 95.0", message)
 
-    def test_parse_args_defaults_to_average_linkage(self) -> None:
-        """Use average linkage unless the user requests strict complete linkage."""
+    def test_parse_args_defaults_to_strict_genus_clustering(self) -> None:
+        """Default to the strict 65% complete-linkage genus cutoff."""
         argv = [
             str(MODULE_PATH),
             "--ani-matrix",
@@ -723,7 +738,8 @@ class ClusterFastAAITests(unittest.TestCase):
         with mock.patch("sys.argv", argv):
             args = parse_args()
 
-        self.assertEqual(args.linkage, "average")
+        self.assertEqual(args.threshold, "0.65")
+        self.assertEqual(args.linkage, "complete")
 
     def test_parse_args_rejects_unsupported_linkage(self) -> None:
         """Reject linkage methods that can introduce uncontrolled chaining."""
@@ -744,7 +760,7 @@ class ClusterFastAAITests(unittest.TestCase):
             parse_args()
 
     def test_hierarchical_linkage_is_invariant_to_matrix_order(self) -> None:
-        """Return the same average-linkage groups after permuting matrix rows."""
+        """Return the same linkage groups after permuting matrix rows."""
         import numpy as np
 
         names = ["A", "B", "C", "D"]
@@ -799,20 +815,20 @@ class ClusterFastAAITests(unittest.TestCase):
         names = ["A", "B", "C"]
         aai = np.array(
             [
-                [100.0, 95.0, 95.0],
-                [95.0, 100.0, 85.0],
-                [95.0, 85.0, 100.0],
+                [100.0, 70.0, 70.0],
+                [70.0, 100.0, 60.0],
+                [70.0, 60.0, 100.0],
             ]
         )
-        average = cluster_hierarchical(aai, names, 0.90, "average")
-        complete = cluster_hierarchical(aai, names, 0.90, "complete")
+        average = cluster_hierarchical(aai, names, 0.65, "average")
+        complete = cluster_hierarchical(aai, names, 0.65, "complete")
 
         self.assertEqual(sorted(map(len, average.values())), [3])
         self.assertEqual(sorted(map(len, complete.values())), [1, 2])
         for members in complete.values():
             for left_position, left in enumerate(members):
                 for right in members[left_position + 1 :]:
-                    self.assertGreaterEqual(aai[left, right], 90.0)
+                    self.assertGreaterEqual(aai[left, right], 65.0)
 
     def test_hierarchical_linkage_rejects_unsupported_method(self) -> None:
         """Reject direct API requests for unsupported linkage methods."""
@@ -825,6 +841,24 @@ class ClusterFastAAITests(unittest.TestCase):
                 0.90,
                 "single",
             )
+
+    def test_average_linkage_warns_that_threshold_is_not_strict(self) -> None:
+        """Warn when exploratory linkage is used with a taxonomic cutoff."""
+        import numpy as np
+
+        aai = np.array(
+            [
+                [100.0, 70.0, 65.0],
+                [70.0, 100.0, 60.0],
+                [65.0, 60.0, 100.0],
+            ]
+        )
+        with self.assertLogs(level="WARNING") as captured:
+            cluster_hierarchical(aai, ["A", "B", "C"], 0.65, "average")
+
+        warning = "\n".join(captured.output)
+        self.assertIn("does not guarantee that every pair", warning)
+        self.assertIn("strict genus-level clustering", warning)
 
     def test_assign_cluster_ids_uses_prefix_and_stable_order(self) -> None:
         """Prefix cluster IDs and order by size then accession."""

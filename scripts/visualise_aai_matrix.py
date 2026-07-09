@@ -73,10 +73,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--linkage",
         choices=["average", "complete"],
-        default="average",
+        default="complete",
         help=(
             "Hierarchical linkage method for the clustered heatmap. "
-            "Default: average."
+            "Complete linkage matches strict taxonomic clustering; average linkage "
+            "is exploratory. Default: complete."
         ),
     )
     args = parser.parse_args()
@@ -820,7 +821,7 @@ def render_clustered_figure(
     lower_threshold: float,
     upper_threshold: float,
     colour_palette: str,
-    linkage_method: str = "average",
+    linkage_method: str = "complete",
 ) -> None:
     """Render the clustered heatmap figure."""
     cmap = build_colormap(colour_palette)
@@ -962,7 +963,7 @@ def write_outputs(
     lower_threshold: float,
     upper_threshold: float,
     colour_palette: str,
-    linkage_method: str = "average",
+    linkage_method: str = "complete",
 ) -> None:
     """Render clustered and simple SVG and PNG outputs beside the input matrix."""
     output_dir = matrix_path.parent

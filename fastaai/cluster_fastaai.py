@@ -16,8 +16,10 @@ Core pipeline
    - Name identity: every matrix name must resolve to metadata by plain accession or
      composite alias.
 3) Cluster: deterministic hierarchical clustering on distance d = 100 - AAI.
-   Average linkage is the default; complete linkage is available when every
-   pair in a cluster must meet the threshold (post-checked).
+   Complete linkage is the default at the strict 65% genus-level threshold;
+   every pair in a cluster must meet the threshold (post-checked). Use 45%
+   explicitly for strict family-level clustering. Average linkage remains an
+   exploratory, non-strict option.
 4) Score candidates, per cluster, with channel-specific transforms,
    winsorization (5-95%), and min-max normalization within cluster:
    - A: Assembly level (rank/3; Complete Genome>Chromosome>Scaffold>Contig).
@@ -70,6 +72,7 @@ Threading:
 
 References:
   - Hierarchical clustering: Murtagh & Contreras, WIREs DMKD (2012), doi:10.1002/widm.53
+  - Genus/family AAI cutoffs: Konstantinidis, mLife (2023), doi:10.1002/mlf2.12088
   - CheckM2: Chklovski et al., Nat Methods (2023), doi:10.1038/s41592-023-01940-w
   - BUSCO v5: Manni et al., Mol Biol Evol (2021), doi:10.1093/molbev/msab199
   - QUAST/N50: Gurevich et al., Bioinformatics (2013), doi:10.1093/bioinformatics/btt086
@@ -134,21 +137,23 @@ def parse_args() -> argparse.Namespace:
         "-t",
         "--threshold",
         required=False,
-        default="0.90",
+        default="0.65",
         help=(
             "AAI threshold as either a fraction in (0,0.90] or a percentage in "
             "(0,90]. Thresholds above 90%% are not applicable to FastAAI matrix "
-            "output. Default: 0.90."
+            "output. Default: 0.65 (strict genus level); use 0.45 or 45 for "
+            "strict family-level clustering."
         ),
     )
     p.add_argument(
         "--linkage",
         choices=["average", "complete"],
-        default="average",
+        default="complete",
         help=(
-            "Hierarchical linkage method. Average linkage groups by mean inter-cluster "
-            "AAI; complete linkage requires every within-cluster pair to meet the "
-            "threshold. Default: average."
+            "Hierarchical linkage method. Complete linkage requires every within-cluster "
+            "pair to meet the threshold and is the strict taxonomic default. Average "
+            "linkage groups by mean inter-cluster AAI and is exploratory. Default: "
+            "complete."
         ),
     )
     p.add_argument(
@@ -245,6 +250,15 @@ def normalise_threshold(raw_threshold: str | float) -> float:
         "thresholds must be in (0,0.90] or (0,90]. "
         f"Got: {raw_threshold}"
     )
+
+
+def taxonomic_level_for_threshold(threshold: float) -> str:
+    """Describe recognised strict AAI cutoffs; all other values are custom."""
+    if abs(threshold - 0.65) <= 1e-12:
+        return "genus"
+    if abs(threshold - 0.45) <= 1e-12:
+        return "family"
+    return "custom"
 
 
 def validate_cluster_id_prefix(prefix: str) -> str:
@@ -1002,7 +1016,7 @@ def cluster_hierarchical(
     ani: "np.ndarray",
     names: list[str],
     threshold: float,
-    linkage_method: str = "average",
+    linkage_method: str = "complete",
 ) -> dict[int, list[int]]:
     """
     Deterministically cluster an AAI matrix using average or complete linkage.
@@ -1022,6 +1036,19 @@ def cluster_hierarchical(
         )
 
     threshold_percent = threshold * 100.0
+    taxonomic_level = taxonomic_level_for_threshold(threshold)
+    if linkage_method == "average":
+        logging.warning(
+            "Average linkage is exploratory and does not guarantee that every pair "
+            "meets the %.2f%% AAI threshold. Use complete linkage for strict %s "
+            "clustering.",
+            threshold_percent,
+            (
+                f"{taxonomic_level}-level"
+                if taxonomic_level != "custom"
+                else "threshold-based"
+            ),
+        )
     sorted_indices = np.argsort(np.asarray(names), kind="stable")
     sorted_ani = ani[np.ix_(sorted_indices, sorted_indices)]
     distance_matrix = 100.0 - sorted_ani
@@ -1054,9 +1081,14 @@ def cluster_hierarchical(
     }
 
     logging.info(
-        "Formed %d %s-linkage clusters at AAI threshold %.2f%%.",
+        "Formed %d %s-linkage %s clusters at AAI threshold %.2f%%.",
         len(clusters),
         linkage_method,
+        (
+            f"{taxonomic_level}-level"
+            if taxonomic_level != "custom"
+            else "custom-threshold"
+        ),
         threshold_percent,
     )
 
@@ -1648,7 +1680,7 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
     # 3) Build per-genome metadata
     meta = build_genome_metadata(names, tsv, csv_df, matrix_to_accession)
 
-    linkage_method = getattr(args, "linkage", "average")
+    linkage_method = getattr(args, "linkage", "complete")
 
     # 4) Hierarchical clustering
     try:

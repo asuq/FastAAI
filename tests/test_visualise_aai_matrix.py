@@ -270,12 +270,12 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
         self.assertEqual(args.upper_threshold, 90.0)
 
-    def test_parse_args_defaults_to_average_linkage(self) -> None:
-        """Match the clustering command's default linkage method."""
+    def test_parse_args_defaults_to_complete_linkage(self) -> None:
+        """Match the clustering command's strict default linkage method."""
         with mock.patch("sys.argv", [str(SCRIPT_PATH), str(MATRIX_20_PATH)]):
             args = VISUALISER_MODULE.parse_args()
 
-        self.assertEqual(args.linkage, "average")
+        self.assertEqual(args.linkage, "complete")
 
     def test_parse_args_rejects_single_linkage(self) -> None:
         """Reject the chaining-prone single-linkage method."""
@@ -304,8 +304,8 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             )
         )
 
-    def test_clustered_render_uses_average_linkage_by_default(self) -> None:
-        """Build the clustered ordering with the shared average-linkage default."""
+    def test_clustered_render_uses_complete_linkage_by_default(self) -> None:
+        """Build the clustered ordering with the shared strict linkage default."""
         genome_names = ["A", "B", "C"]
         matrix_values = np.array(
             [
@@ -329,39 +329,39 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
                     40.0,
                     100.0,
                     "Blues",
-                )
-
-        self.assertEqual(linkage_mock.call_args.kwargs["method"], "average")
-
-    def test_clustered_render_accepts_complete_linkage(self) -> None:
-        """Retain strict complete linkage as an explicit visualisation option."""
-        genome_names = ["A", "B", "C"]
-        matrix_values = np.array(
-            [
-                [100.0, 80.0, 45.0],
-                [80.0, 100.0, 50.0],
-                [45.0, 50.0, 100.0],
-            ]
-        )
-        with tempfile.TemporaryDirectory() as tempdir:
-            output_path = Path(tempdir) / "clustered.svg"
-            with mock.patch.object(
-                VISUALISER_MODULE,
-                "linkage",
-                wraps=VISUALISER_MODULE.linkage,
-            ) as linkage_mock:
-                VISUALISER_MODULE.render_clustered_figure(
-                    genome_names,
-                    matrix_values,
-                    output_path,
-                    "clustered.svg",
-                    40.0,
-                    100.0,
-                    "Blues",
-                    "complete",
                 )
 
         self.assertEqual(linkage_mock.call_args.kwargs["method"], "complete")
+
+    def test_clustered_render_accepts_average_linkage(self) -> None:
+        """Retain exploratory average linkage as an explicit visualisation option."""
+        genome_names = ["A", "B", "C"]
+        matrix_values = np.array(
+            [
+                [100.0, 80.0, 45.0],
+                [80.0, 100.0, 50.0],
+                [45.0, 50.0, 100.0],
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_path = Path(tempdir) / "clustered.svg"
+            with mock.patch.object(
+                VISUALISER_MODULE,
+                "linkage",
+                wraps=VISUALISER_MODULE.linkage,
+            ) as linkage_mock:
+                VISUALISER_MODULE.render_clustered_figure(
+                    genome_names,
+                    matrix_values,
+                    output_path,
+                    "clustered.svg",
+                    40.0,
+                    100.0,
+                    "Blues",
+                    "average",
+                )
+
+        self.assertEqual(linkage_mock.call_args.kwargs["method"], "average")
 
     def test_derive_top_dendrogram_height_scales_with_matrix_size(self) -> None:
         """Use a lower capped clustered top dendrogram height."""
