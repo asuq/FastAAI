@@ -23,6 +23,8 @@ Coming soon
    - numpy
    - pyrodigal - https://github.com/althonos/pyrodigal/
    - pyhmmer - https://github.com/althonos/pyhmmer
+   - matplotlib
+   - scipy
 
 ## Installation
 
@@ -189,6 +191,32 @@ The matrix format ("--output_style matrix") produces a tab-separated matrix cont
 These changes to avoid text labelling were done to make working with the (often quite large) tabular results in subsequent analyses using R, Python, or another language easier, as all of the results are already in numerical format. 
 
 None of the other data aside from the estimated AAI is available in the matrix-formatted output.
+
+### Matrix clustering and visualisation
+
+`scripts/cluster_fastaai.py` clusters a numeric FastAAI matrix and selects one
+quality-scored representative per cluster. Average linkage is the default and
+interprets the threshold as the minimum mean AAI for a hierarchical merge.
+Complete linkage is available when every pair within a cluster must meet the
+threshold:
+
+```bash
+python scripts/cluster_fastaai.py \
+    --ani-matrix FastAAI_matrix.txt \
+    --input-list input_list.tsv \
+    --metadata metadata.tsv \
+    --threshold 90 \
+    --linkage average \
+    --outdir clusters
+```
+
+For average-linkage clusters, representative selection first considers genomes
+that meet the threshold to every member. If no such genome exists, the command
+warns and falls back to the normal quality score.
+
+`scripts/visualise_aai_matrix.py` uses the same average-linkage default. Pass
+`--linkage complete` to either command when the clustered heatmap and clustering
+output should use strict complete linkage.
 
 ## License
 

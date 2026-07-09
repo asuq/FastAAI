@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "fastaai" / "cluster_fastaai.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("test_cluster_fastaai_module", MODULE_PATH)
@@ -19,10 +20,12 @@ sys.modules[MODULE_SPEC.name] = CLUSTER_FASTAAI
 MODULE_SPEC.loader.exec_module(CLUSTER_FASTAAI)
 
 assign_cluster_ids = CLUSTER_FASTAAI.assign_cluster_ids
+cluster_hierarchical = CLUSTER_FASTAAI.cluster_hierarchical
 Genome = CLUSTER_FASTAAI.Genome
 load_matrix = CLUSTER_FASTAAI.load_matrix
 load_and_check_tables = CLUSTER_FASTAAI.load_and_check_tables
 normalise_threshold = CLUSTER_FASTAAI.normalise_threshold
+parse_args = CLUSTER_FASTAAI.parse_args
 run_pipeline = CLUSTER_FASTAAI.run_pipeline
 sanitise = CLUSTER_FASTAAI.sanitise
 normalise_organism_name_for_alias = CLUSTER_FASTAAI.normalise_organism_name_for_alias
@@ -704,6 +707,125 @@ class ClusterFastAAITests(unittest.TestCase):
         self.assertIn("FastAAI", message)
         self.assertIn(">90% AAI values to 95.0", message)
 
+    def test_parse_args_defaults_to_average_linkage(self) -> None:
+        """Use average linkage unless the user requests strict complete linkage."""
+        argv = [
+            str(MODULE_PATH),
+            "--ani-matrix",
+            "matrix.tsv",
+            "--input-list",
+            "input.tsv",
+            "--metadata",
+            "metadata.tsv",
+            "--outdir",
+            "out",
+        ]
+        with mock.patch("sys.argv", argv):
+            args = parse_args()
+
+        self.assertEqual(args.linkage, "average")
+
+    def test_parse_args_rejects_unsupported_linkage(self) -> None:
+        """Reject linkage methods that can introduce uncontrolled chaining."""
+        argv = [
+            str(MODULE_PATH),
+            "--ani-matrix",
+            "matrix.tsv",
+            "--input-list",
+            "input.tsv",
+            "--metadata",
+            "metadata.tsv",
+            "--outdir",
+            "out",
+            "--linkage",
+            "single",
+        ]
+        with mock.patch("sys.argv", argv), self.assertRaises(SystemExit):
+            parse_args()
+
+    def test_hierarchical_linkage_is_invariant_to_matrix_order(self) -> None:
+        """Return the same average-linkage groups after permuting matrix rows."""
+        import numpy as np
+
+        names = ["A", "B", "C", "D"]
+        aai = np.array(
+            [
+                [100.0, 95.0, 95.0, 50.0],
+                [95.0, 100.0, 85.0, 50.0],
+                [95.0, 85.0, 100.0, 50.0],
+                [50.0, 50.0, 50.0, 100.0],
+            ]
+        )
+
+        def accession_groups(
+            matrix_names: list[str],
+            matrix: "np.ndarray",
+            linkage_method: str,
+        ) -> set[frozenset[str]]:
+            clusters = cluster_hierarchical(
+                matrix,
+                matrix_names,
+                0.90,
+                linkage_method=linkage_method,
+            )
+            return {
+                frozenset(matrix_names[index] for index in members)
+                for members in clusters.values()
+            }
+
+        order = [3, 2, 0, 1]
+        permuted_names = [names[index] for index in order]
+        permuted_aai = aai[np.ix_(order, order)]
+
+        for linkage_method in ("average", "complete"):
+            with self.subTest(linkage_method=linkage_method):
+                expected = accession_groups(names, aai, linkage_method)
+                observed = accession_groups(
+                    permuted_names,
+                    permuted_aai,
+                    linkage_method,
+                )
+                self.assertEqual(observed, expected)
+
+        self.assertEqual(
+            accession_groups(names, aai, "average"),
+            {frozenset({"A", "B", "C"}), frozenset({"D"})},
+        )
+
+    def test_average_and_complete_linkage_have_distinct_threshold_contracts(self) -> None:
+        """Average may merge by mean AAI while complete enforces every pair."""
+        import numpy as np
+
+        names = ["A", "B", "C"]
+        aai = np.array(
+            [
+                [100.0, 95.0, 95.0],
+                [95.0, 100.0, 85.0],
+                [95.0, 85.0, 100.0],
+            ]
+        )
+        average = cluster_hierarchical(aai, names, 0.90, "average")
+        complete = cluster_hierarchical(aai, names, 0.90, "complete")
+
+        self.assertEqual(sorted(map(len, average.values())), [3])
+        self.assertEqual(sorted(map(len, complete.values())), [1, 2])
+        for members in complete.values():
+            for left_position, left in enumerate(members):
+                for right in members[left_position + 1 :]:
+                    self.assertGreaterEqual(aai[left, right], 90.0)
+
+    def test_hierarchical_linkage_rejects_unsupported_method(self) -> None:
+        """Reject direct API requests for unsupported linkage methods."""
+        import numpy as np
+
+        with self.assertRaisesRegex(ValueError, "Unsupported linkage method"):
+            cluster_hierarchical(
+                np.array([[100.0, 95.0], [95.0, 100.0]]),
+                ["A", "B"],
+                0.90,
+                "single",
+            )
+
     def test_assign_cluster_ids_uses_prefix_and_stable_order(self) -> None:
         """Prefix cluster IDs and order by size then accession."""
         results = [
@@ -783,6 +905,85 @@ class ClusterFastAAITests(unittest.TestCase):
         self.assertIn("C=0.05", dbg[0])
         self.assertGreater(meta["A"].Score, meta["C"].Score)
         self.assertGreater(meta["B"].Score, meta["A"].Score)
+
+    def test_average_linkage_prefers_threshold_compatible_representative(self) -> None:
+        """Restrict average-linkage representatives to threshold-compatible centres."""
+        import numpy as np
+
+        names = ["A", "B", "C"]
+        aai = np.array(
+            [
+                [100.0, 95.0, 95.0],
+                [95.0, 100.0, 85.0],
+                [95.0, 85.0, 100.0],
+            ]
+        )
+        meta = {
+            "A": self.genome(
+                "A",
+                assembly_level="Contig",
+                assembly_rank=0,
+                scaffolds=50,
+            ),
+            "B": self.genome(
+                "B",
+                assembly_level="Complete Genome",
+                assembly_rank=3,
+                scaffolds=1,
+            ),
+            "C": self.genome(
+                "C",
+                assembly_level="Contig",
+                assembly_rank=0,
+                scaffolds=50,
+            ),
+        }
+
+        _size, representative, debug_lines = select_representative_for_indices(
+            [0, 1, 2],
+            names,
+            meta,
+            aai,
+            "default",
+            threshold=0.90,
+            linkage_method="average",
+        )
+
+        self.assertEqual(representative, "A")
+        self.assertIn("retained 1/3 candidate", "\n".join(debug_lines))
+
+    def test_average_linkage_warns_and_falls_back_without_central_candidate(self) -> None:
+        """Fall back to quality scoring when no member reaches every other member."""
+        import numpy as np
+
+        names = ["A", "B", "C"]
+        aai = np.array(
+            [
+                [100.0, 95.0, 85.0],
+                [95.0, 100.0, 85.0],
+                [85.0, 85.0, 100.0],
+            ]
+        )
+        meta = {
+            "A": self.genome("A", assembly_level="Contig", assembly_rank=0),
+            "B": self.genome("B", assembly_level="Complete Genome", assembly_rank=3),
+            "C": self.genome("C", assembly_level="Contig", assembly_rank=0),
+        }
+
+        with self.assertLogs(level="WARNING") as captured:
+            _size, representative, debug_lines = select_representative_for_indices(
+                [0, 1, 2],
+                names,
+                meta,
+                aai,
+                "default",
+                threshold=0.90,
+                linkage_method="average",
+            )
+
+        self.assertEqual(representative, "B")
+        self.assertIn("no representative candidate", "\n".join(captured.output))
+        self.assertIn("fell back", "\n".join(debug_lines))
 
     def test_run_pipeline_writes_prefixed_cluster_outputs(self) -> None:
         """Run the full pipeline with a custom cluster prefix."""

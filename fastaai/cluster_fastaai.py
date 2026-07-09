@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Cluster genomes from a FastAAI matrix using complete linkage and choose
+Cluster genomes from a FastAAI matrix using hierarchical linkage and choose
 one representative per cluster.
 
-Required packages: numpy
+Required packages: numpy, scipy
 
 Core pipeline
 -------------
@@ -15,8 +15,9 @@ Core pipeline
    - metadata.tsv : required fields present & parseable (see REQUIRED_NONEMPTY_COLS).
    - Name identity: every matrix name must resolve to metadata by plain accession or
      composite alias.
-3) Cluster: complete-linkage on distance d = 1 - ANI/100; cut at (1 - threshold)
-   so all pairs in a cluster have ANI >= threshold and non-NA (post-checked).
+3) Cluster: deterministic hierarchical clustering on distance d = 100 - AAI.
+   Average linkage is the default; complete linkage is available when every
+   pair in a cluster must meet the threshold (post-checked).
 4) Score candidates, per cluster, with channel-specific transforms,
    winsorization (5-95%), and min-max normalization within cluster:
    - A: Assembly level (rank/3; Complete Genome>Chromosome>Scaffold>Contig).
@@ -24,11 +25,11 @@ Core pipeline
    - Q: CheckM2 (Complete - 5*Contamination) %, winsorized -> min-max (Gcode-matched).
    - N: N50, log10(x+1) -> winsorized -> min-max.
    - S: Scaffolds, log10(x+1) -> winsorized -> min-max -> invert (fewer is better).
-   - C: ANI centrality within cluster:
-           - for each genome i, compute mean ANI to all other members;
+   - C: AAI centrality within cluster:
+           - for each genome i, compute mean AAI to all other members;
            - if max(mean_i) - min(mean_i) < 0.05, treat the cluster as
              homogeneous and set C_i = 0.5 for all members;
-           - otherwise rescale the mean ANI values so the minimum becomes 0
+           - otherwise rescale the mean AAI values so the minimum becomes 0
              and the maximum becomes 1;
            singleton clusters get C=1.
    Composite score S = wA*A + wB*B + wQ*Q + wN*N + wS*S + wC*C.
@@ -98,7 +99,7 @@ from typing import Any, NoReturn
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Cluster genomes from a FastAAI matrix using complete linkage and select "
+            "Cluster genomes from a FastAAI matrix using hierarchical linkage and select "
             "representatives by a composite quality score with deterministic tie-break."
         )
     )
@@ -138,6 +139,16 @@ def parse_args() -> argparse.Namespace:
             "AAI threshold as either a fraction in (0,0.90] or a percentage in "
             "(0,90]. Thresholds above 90%% are not applicable to FastAAI matrix "
             "output. Default: 0.90."
+        ),
+    )
+    p.add_argument(
+        "--linkage",
+        choices=["average", "complete"],
+        default="average",
+        help=(
+            "Hierarchical linkage method. Average linkage groups by mean inter-cluster "
+            "AAI; complete linkage requires every within-cluster pair to meet the "
+            "threshold. Default: average."
         ),
     )
     p.add_argument(
@@ -987,68 +998,91 @@ def build_genome_metadata(
 # --------------------------------------------------------------------------- #
 # Clustering + post-check
 # --------------------------------------------------------------------------- #
+def cluster_hierarchical(
+    ani: "np.ndarray",
+    names: list[str],
+    threshold: float,
+    linkage_method: str = "average",
+) -> dict[int, list[int]]:
+    """
+    Deterministically cluster an AAI matrix using average or complete linkage.
+
+    Genome names are sorted before linkage so exact distance ties do not make
+    cluster membership depend on the input matrix row order. Returned member
+    indices always refer to the original matrix order.
+    """
+    import numpy as np
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    if linkage_method not in {"average", "complete"}:
+        raise ValueError(
+            "Unsupported linkage method: "
+            f"'{linkage_method}'. Expected 'average' or 'complete'."
+        )
+
+    threshold_percent = threshold * 100.0
+    sorted_indices = np.argsort(np.asarray(names), kind="stable")
+    sorted_ani = ani[np.ix_(sorted_indices, sorted_indices)]
+    distance_matrix = 100.0 - sorted_ani
+    distance_matrix[
+        (distance_matrix < 0.0) & (distance_matrix > -1e-8)
+    ] = 0.0
+    if np.any(distance_matrix < 0.0):
+        raise ValueError("Derived negative distances from the AAI matrix.")
+    np.fill_diagonal(distance_matrix, 0.0)
+
+    condensed_distance = squareform(distance_matrix, checks=False)
+    linkage_matrix = linkage(condensed_distance, method=linkage_method)
+    sorted_labels = fcluster(
+        linkage_matrix,
+        t=100.0 - threshold_percent,
+        criterion="distance",
+    )
+
+    members_by_label: dict[int, list[int]] = defaultdict(list)
+    for sorted_position, raw_label in enumerate(sorted_labels):
+        original_index = int(sorted_indices[sorted_position])
+        members_by_label[int(raw_label)].append(original_index)
+
+    cluster_lists = sorted(
+        (sorted(members) for members in members_by_label.values()),
+        key=lambda members: tuple(sorted(names[index] for index in members)),
+    )
+    clusters = {
+        label: members for label, members in enumerate(cluster_lists, start=1)
+    }
+
+    logging.info(
+        "Formed %d %s-linkage clusters at AAI threshold %.2f%%.",
+        len(clusters),
+        linkage_method,
+        threshold_percent,
+    )
+
+    if linkage_method == "complete":
+        for lab, idxs in clusters.items():
+            for i in range(len(idxs)):
+                for j in range(i + 1, len(idxs)):
+                    a, b = idxs[i], idxs[j]
+                    val = ani[a, b]
+                    if np.isnan(val) or val < threshold_percent:
+                        die(
+                            f"Post-check failed: complete-linkage cluster label {lab} "
+                            f"contains pair ({names[a]}, {names[b]}) with AAI={val} "
+                            f"(must be non-NA and >= {threshold_percent:.2f})."
+                        )
+
+    return clusters
+
+
 def cluster_complete_linkage(
     ani: "np.ndarray",
     names: list[str],
     threshold: float,
 ) -> dict[int, list[int]]:
-    """
-    Complete-linkage clustering on an AAI matrix.
-    Merge clusters only when every cross-cluster pair has ANI >= threshold.
-    """
-    import numpy as np
-
-    threshold_percent = threshold * 100.0
-    cluster_lists: list[list[int]] = [[index] for index in range(len(names))]
-
-    def can_merge(left: list[int], right: list[int]) -> bool:
-        for left_index in left:
-            for right_index in right:
-                value = ani[left_index, right_index]
-                if np.isnan(value) or value < threshold_percent:
-                    return False
-        return True
-
-    merged = True
-    while merged:
-        merged = False
-        for left_pos in range(len(cluster_lists)):
-            for right_pos in range(left_pos + 1, len(cluster_lists)):
-                if can_merge(cluster_lists[left_pos], cluster_lists[right_pos]):
-                    cluster_lists[left_pos] = sorted(
-                        cluster_lists[left_pos] + cluster_lists[right_pos]
-                    )
-                    del cluster_lists[right_pos]
-                    merged = True
-                    break
-            if merged:
-                break
-
-    clusters: dict[int, list[int]] = {
-        label: members for label, members in enumerate(cluster_lists, start=1)
-    }
-
-    logging.info(
-        "Formed %d complete-linkage clusters at ANI >= %.2f%%.",
-        len(clusters),
-        threshold_percent,
-    )
-
-    # Post-check: every pair in each cluster must be finite ANI >= threshold
-    # Checked by the values in the matrix (e.g. ani[0, 1] = ANI distance between sample idx 0 and 1)
-    for lab, idxs in clusters.items():
-        for i in range(len(idxs)):
-            for j in range(i + 1, len(idxs)):
-                a, b = idxs[i], idxs[j]
-                val = ani[a, b]
-                if np.isnan(val) or val < threshold_percent:
-                    die(
-                        f"Post-check failed: cluster label {lab} contains pair "
-                        f"({names[a]}, {names[b]}) with ANI={val} "
-                        f"(must be non-NA and >= {threshold_percent:.2f})."
-                    )
-
-    return clusters
+    """Backward-compatible wrapper for strict complete-linkage clustering."""
+    return cluster_hierarchical(ani, names, threshold, linkage_method="complete")
 
 
 # --------------------------------------------------------------------------- #
@@ -1060,6 +1094,8 @@ def select_representative_for_indices(
     meta: dict[str, Genome],
     ani: "np.ndarray",
     score_profile: str,
+    threshold: float | None = None,
+    linkage_method: str = "complete",
 ) -> tuple[int, str, list[str]]:
     """
     Select one representative by a composite score.
@@ -1070,11 +1106,11 @@ def select_representative_for_indices(
       B: BUSCO:   (BUSCO_C - 1*BUSCO_M)/100 -> winsorize 5-95% -> min-max
       N: N50:     log10(x+1) -> winsorize 5-95% if n>=8 -> min-max
       S: Scaffolds: log10(x+1) -> winsorize 5-95% if n>=8 -> min-max -> invert
-      C: ANI centrality within cluster:
-           - for each genome i, compute mean ANI to all other members;
+      C: AAI centrality within cluster:
+           - for each genome i, compute mean AAI to all other members;
            - if max(mean_i) - min(mean_i) < 0.05, treat the cluster as
              homogeneous and set C_i = 0.5 for all members;
-           - otherwise rescale the mean ANI values so the minimum becomes 0
+            - otherwise rescale the mean AAI values so the minimum becomes 0
              and the maximum becomes 1;
            singleton clusters get C=1.
 
@@ -1123,11 +1159,11 @@ def select_representative_for_indices(
         homogeneity_delta: float = 0.05,
     ) -> "np.ndarray":
         """
-        Compute ANI centrality within a cluster.
+        Compute AAI centrality within a cluster.
 
         For each genome i in the cluster:
-        - Compute m_i = mean ANI from i to all other members.
-        - If max(m_i) - min(m_i) < homogeneity_delta (in % ANI),
+        - Compute m_i = mean AAI from i to all other members.
+        - If max(m_i) - min(m_i) < homogeneity_delta (in % AAI),
             treat the cluster as homogeneous and return 0.5 for all members.
         - Otherwise, linearly scale m_i so that min(m_i) -> 0 and max(m_i) -> 1.
         """
@@ -1176,7 +1212,7 @@ def select_representative_for_indices(
     cont_log = np.log10(np.array([g.Scaffolds for g in infos], dtype=float) + 1.0)
     S_vals = 1.0 - minmax_norm(winsorize(cont_log))
 
-    # ANI centrality
+    # AAI centrality
     C_vals = ani_centrality_within_cluster(idxs, ani, homogeneity_delta=0.05)
 
     ## Weights ================================================================
@@ -1247,10 +1283,48 @@ def select_representative_for_indices(
             )
         )
 
+    selection_pool = scored
+    if linkage_method == "average" and threshold is not None and len(idxs) > 1:
+        threshold_percent = threshold * 100.0
+        central_accessions = {
+            names[index]
+            for index in idxs
+            if all(
+                not np.isnan(ani[index, other])
+                and ani[index, other] >= threshold_percent
+                for other in idxs
+                if other != index
+            )
+        }
+        if central_accessions:
+            selection_pool = [
+                candidate for candidate in scored if candidate[0] in central_accessions
+            ]
+            dbg.append(
+                "Average-linkage representative eligibility retained "
+                f"{len(selection_pool)}/{n} candidate(s) at AAI >= "
+                f"{threshold_percent:.2f}% to every cluster member."
+            )
+        else:
+            logging.warning(
+                "Average-linkage cluster has no representative candidate at AAI >= "
+                "%.2f%% to every member; falling back to quality scoring across all "
+                "members: %s",
+                threshold_percent,
+                ", ".join(sorted(accs)),
+            )
+            dbg.append(
+                "No threshold-compatible central representative candidate; "
+                "fell back to all cluster members."
+            )
+
     # Primary selection by score
-    scored.sort(key=lambda x: (-x[1], x[0]))
-    top_score = scored[0][1]
-    tied = [acc for acc, s, _, _ in scored if abs(s - top_score) <= _EPS]
+    selection_pool.sort(key=lambda x: (-x[1], x[0]))
+    top_score = selection_pool[0][1]
+    tied = [
+        acc for acc, score, _, _ in selection_pool
+        if abs(score - top_score) <= _EPS
+    ]
     if len(tied) == 1:
         dbg.append(f"Chosen by score alone: {tied[0]} (score={top_score:.6f})")
         return n, tied[0], dbg
@@ -1302,6 +1376,8 @@ def select_representatives_for_clusters(
     ani: "np.ndarray",
     score_profile: str,
     threads: int,
+    threshold: float | None = None,
+    linkage_method: str = "complete",
 ) -> list[tuple[int, str, int, list[int], list[str]]]:
     """
     Select representatives for all clusters in parallel.
@@ -1320,6 +1396,8 @@ def select_representatives_for_clusters(
                 meta,
                 ani,
                 score_profile,
+                threshold,
+                linkage_method,
             ): lab
             for lab, idxs in clusters.items()
         }
@@ -1433,7 +1511,7 @@ def build_cluster_rows(
                 v = ani[idx, rep_idx]
                 if np.isnan(v):
                     die(
-                        f"Internal error: NA ANI inside complete-link cluster {cid} "
+                        f"Internal error: NA AAI inside cluster {cid} "
                         f"between '{acc}' and representative '{rep_acc}'"
                     )
                 ani_to_rep = f"{v:.4f}"
@@ -1540,7 +1618,7 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
       1) Load AAI matrix.
       2) Load and validate TSV tables.
       3) Build per-genome metadata.
-      4) Complete-linkage clustering.
+      4) Deterministic hierarchical clustering.
       5) Parallel representative selection.
       6) Assign cluster IDs.
       7) Warn on Gcode mixtures.
@@ -1570,8 +1648,18 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
     # 3) Build per-genome metadata
     meta = build_genome_metadata(names, tsv, csv_df, matrix_to_accession)
 
-    # 4) Complete-linkage clustering
-    clusters = cluster_complete_linkage(ani, names, threshold)
+    linkage_method = getattr(args, "linkage", "average")
+
+    # 4) Hierarchical clustering
+    try:
+        clusters = cluster_hierarchical(
+            ani,
+            names,
+            threshold,
+            linkage_method=linkage_method,
+        )
+    except ValueError as exc:
+        die(str(exc))
 
     # 5) Representative selection (parallel)
     results = select_representatives_for_clusters(
@@ -1581,6 +1669,8 @@ def run_pipeline(args: argparse.Namespace, threads: int) -> None:
         ani=ani,
         score_profile=args.score_profile,
         threads=threads,
+        threshold=threshold,
+        linkage_method=linkage_method,
     )
 
     # 6) Assign cluster IDs

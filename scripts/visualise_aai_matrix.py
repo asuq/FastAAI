@@ -70,6 +70,15 @@ def parse_args() -> argparse.Namespace:
         default="Blues",
         help="Matplotlib colour palette name for the heatmaps.",
     )
+    parser.add_argument(
+        "--linkage",
+        choices=["average", "complete"],
+        default="average",
+        help=(
+            "Hierarchical linkage method for the clustered heatmap. "
+            "Default: average."
+        ),
+    )
     args = parser.parse_args()
     validate_thresholds(args.lower_threshold, args.upper_threshold)
     validate_colour_palette(args.colour_palette)
@@ -811,14 +820,19 @@ def render_clustered_figure(
     lower_threshold: float,
     upper_threshold: float,
     colour_palette: str,
+    linkage_method: str = "average",
 ) -> None:
     """Render the clustered heatmap figure."""
     cmap = build_colormap(colour_palette)
     norm = colors.Normalize(vmin=lower_threshold, vmax=upper_threshold, clip=True)
-    condensed_distance = build_distance_condensed(matrix_values)
-    linkage_matrix = linkage(condensed_distance, method="complete")
+    sorted_indices = np.argsort(np.asarray(genome_names), kind="stable")
+    sorted_matrix = matrix_values[np.ix_(sorted_indices, sorted_indices)]
+    condensed_distance = build_distance_condensed(sorted_matrix)
+    linkage_matrix = linkage(condensed_distance, method=linkage_method)
     dendrogram_info = dendrogram(linkage_matrix, no_plot=True)
-    ordered_indices = dendrogram_info["leaves"]
+    ordered_indices = [
+        int(sorted_indices[index]) for index in dendrogram_info["leaves"]
+    ]
     ordered_matrix = matrix_values[np.ix_(ordered_indices, ordered_indices)]
     ordered_names = [genome_names[index] for index in ordered_indices]
     show_all_labels = should_render_sample_labels(len(ordered_names))
@@ -948,6 +962,7 @@ def write_outputs(
     lower_threshold: float,
     upper_threshold: float,
     colour_palette: str,
+    linkage_method: str = "average",
 ) -> None:
     """Render clustered and simple SVG and PNG outputs beside the input matrix."""
     output_dir = matrix_path.parent
@@ -965,6 +980,7 @@ def write_outputs(
         lower_threshold,
         upper_threshold,
         colour_palette,
+        linkage_method,
     )
     render_clustered_figure(
         genome_names,
@@ -974,6 +990,7 @@ def write_outputs(
         lower_threshold,
         upper_threshold,
         colour_palette,
+        linkage_method,
     )
     render_simple_figure(
         matrix_values,
@@ -1012,6 +1029,7 @@ def main() -> int:
         args.lower_threshold,
         args.upper_threshold,
         args.colour_palette,
+        args.linkage,
     )
     return 0
 

@@ -270,6 +270,21 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
 
         self.assertEqual(args.upper_threshold, 90.0)
 
+    def test_parse_args_defaults_to_average_linkage(self) -> None:
+        """Match the clustering command's default linkage method."""
+        with mock.patch("sys.argv", [str(SCRIPT_PATH), str(MATRIX_20_PATH)]):
+            args = VISUALISER_MODULE.parse_args()
+
+        self.assertEqual(args.linkage, "average")
+
+    def test_parse_args_rejects_single_linkage(self) -> None:
+        """Reject the chaining-prone single-linkage method."""
+        with mock.patch(
+            "sys.argv",
+            [str(SCRIPT_PATH), "--linkage", "single", str(MATRIX_20_PATH)],
+        ), self.assertRaises(SystemExit):
+            VISUALISER_MODULE.parse_args()
+
     def test_build_distance_condensed_uses_100_minus_identity(self) -> None:
         """Convert percent similarity values to percent distances from 100."""
         matrix_values = np.array(
@@ -289,8 +304,8 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
             )
         )
 
-    def test_clustered_render_uses_complete_linkage_explicitly(self) -> None:
-        """Build the clustered ordering with explicit complete linkage."""
+    def test_clustered_render_uses_average_linkage_by_default(self) -> None:
+        """Build the clustered ordering with the shared average-linkage default."""
         genome_names = ["A", "B", "C"]
         matrix_values = np.array(
             [
@@ -314,6 +329,36 @@ class VisualiseAAIMatrixTests(unittest.TestCase):
                     40.0,
                     100.0,
                     "Blues",
+                )
+
+        self.assertEqual(linkage_mock.call_args.kwargs["method"], "average")
+
+    def test_clustered_render_accepts_complete_linkage(self) -> None:
+        """Retain strict complete linkage as an explicit visualisation option."""
+        genome_names = ["A", "B", "C"]
+        matrix_values = np.array(
+            [
+                [100.0, 80.0, 45.0],
+                [80.0, 100.0, 50.0],
+                [45.0, 50.0, 100.0],
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_path = Path(tempdir) / "clustered.svg"
+            with mock.patch.object(
+                VISUALISER_MODULE,
+                "linkage",
+                wraps=VISUALISER_MODULE.linkage,
+            ) as linkage_mock:
+                VISUALISER_MODULE.render_clustered_figure(
+                    genome_names,
+                    matrix_values,
+                    output_path,
+                    "clustered.svg",
+                    40.0,
+                    100.0,
+                    "Blues",
+                    "complete",
                 )
 
         self.assertEqual(linkage_mock.call_args.kwargs["method"], "complete")
