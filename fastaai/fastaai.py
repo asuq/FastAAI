@@ -2708,7 +2708,7 @@ def one_init(ql, tl, num_tgt, tgak, tpres, sd, sty, output_dir, store_results, p
 	global _tnames
 	_tnames = tnames
 	
-def one_work(task):	
+def one_work(task):
 	task_id, local_qgak, query_grouping = task
 	group_id = os.path.normpath(temp_path + "/partial_results_group_" + str(task_id)+ ".txt")
 	holder = []
@@ -2760,7 +2760,7 @@ def one_work(task):
 					jaccard_SDs[no_hit] = "N/A"
 					for i in range(0, len(aai_ests)):
 						out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+jaccard_SDs[i]+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
-				else:			
+				else:
 					for i in range(0, len(aai_ests)):
 						out.write(qname+"\t"+_tnames[i]+"\t"+jaccard_averages[i]+"\t"+"N/A"+"\t"+shared_acc_counts[i]+"\t"+possible_hits[i]+"\t"+aai_ests[i]+"\n")
 				out.close()
@@ -2795,11 +2795,11 @@ def two_work(i):
 		outwriter.close()
 		
 	return group_id
-	
+
 def on_disk_init(query_database_path, target_database_path, num_tgt, target_gak, tpres, sd, sty, output_dir, progress_queue, qnames, tnames, valids, temp_dir):
 	global database
 	database = sqlite3.connect(":memory:")
-	
+
 	curs = database.cursor()
 	curs.execute("attach '" + query_database_path + "' as queries")
 	curs.execute("attach '" + target_database_path + "' as targets")
@@ -2926,7 +2926,7 @@ def on_disk_work_one(task):
 			aai_ests = numpy_kaai_to_aai_just_nums(jaccard_averages, as_float = True)
 			aai_ests[no_hit] = 0
 			output_rows.append("\t".join(str(value) for value in aai_ests))
-	
+
 	curs.close()
 	if style == "matrix":
 		if len(query_grouping) == 0:
@@ -3123,7 +3123,7 @@ class db_db_remake:
 		else:
 			print("\nCalculating AAI.")
 		
-		self.num_result_groups = len(self.query_gak)
+		self.num_result_groups = self.count_result_groups()
 		
 		pool = multiprocessing.Pool(self.threads, initializer = one_init, 
 		initargs = (ql, #ql 
@@ -3172,7 +3172,7 @@ class db_db_remake:
 		else:
 			print("\nCalculating AAI")
 		
-		self.num_result_groups = len(self.query_gak)
+		self.num_result_groups = self.count_result_groups()
 		
 		#query_database_path, target_database_path, num_tgt, query_queue, target_gak, tpres, sd, 
 		#sty, output_dir, progress_queue, qnames, tnames, valids, temp_dir
@@ -3212,6 +3212,10 @@ class db_db_remake:
 		if self.style == "matrix":
 			self.write_mat_from_files(result_files, tempdir_path)
 			
+	def count_result_groups(self):
+		"""Return the number of non-empty query groups that produce files."""
+		return sum(1 for _, _, query_grouping in self.query_gak if len(query_grouping) > 0)
+
 	def validate_result_files(self, result_files):
 		"""Validate matrix partial result files before combining them."""
 		if len(result_files) != self.num_result_groups:
@@ -4798,5 +4802,3 @@ def main():
 	
 if __name__ == "__main__":
 	main()
-
-	
