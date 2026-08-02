@@ -18,7 +18,7 @@ Fast estimation of Average Amino Acid Identities (AAI) for bacterial and archaea
 Coming soon
 
 ## Requirements:
-- Python >=3.6 (3.9+ recommended)
+- Python >=3.10
 - Additional Python Modules:
    - numpy
    - pyrodigal - https://github.com/althonos/pyrodigal/
@@ -29,7 +29,7 @@ Coming soon
 FastAAI and all its dependencies can be installed through pip with the following command:
 
 ```bash
-pip install FastAAI
+pip install FastAAI-release
 ```
 
 ## Usage

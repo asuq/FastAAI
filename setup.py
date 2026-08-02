@@ -14,7 +14,7 @@ setuptools.setup(
 	packages=setuptools.find_packages(),
 	py_modules=["fastaai_api"],
 	include_package_data=True,
-	python_requires='>=3',
+	python_requires='>=3.10',
 	install_requires=[
 		'numpy==2.2.2',
 		'pyrodigal==3.6.3',
