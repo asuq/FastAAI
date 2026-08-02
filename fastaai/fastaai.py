@@ -110,31 +110,61 @@ def convert_float_array_32(bytestring):
 def convert_float_array_64(bytestring):
 	return np.frombuffer(bytestring, dtype = np.float64)
 
+
+def normalise_pyhmmer_text(value):
+	"""Return PyHMMER text fields as Python strings."""
+	if value is None:
+		return None
+	if isinstance(value, bytes):
+		return value.decode("utf-8")
+	return str(value)
+
+
+def decode_text_buffer(value, file_path):
+	"""Decode FASTAAI text inputs with a small compatibility fallback."""
+	for encoding in ("utf-8", "latin-1"):
+		try:
+			return value.decode(encoding)
+		except UnicodeDecodeError:
+			continue
+	raise ValueError("Unable to decode text input: " + str(file_path))
+
 def read_fasta(file):
 	cur_seq = ""
 	cur_prot = ""
+	defline = ""
 	
 	contents = {}
 	deflines = {}
 	
 	fasta = agnostic_reader(file)
-	for line in fasta:
+	for line_number, line in enumerate(fasta, start = 1):
+		line = line.strip()
+		if len(line) == 0:
+			continue
+
 		if line.startswith(">"):
-			if len(cur_seq) > 0:
+			if len(cur_prot) > 0:
 				contents[cur_prot] = cur_seq
 				deflines[cur_prot] = defline
 				
 			cur_seq = ""
-			cur_prot = line.strip().split()[0][1:]
-			defline = line.strip()[len(cur_prot)+1 :].strip()
+			cur_prot = line.split()[0][1:]
+			if len(cur_prot) == 0:
+				fasta.close()
+				raise ValueError("Malformed FASTA in " + str(file) + ": empty header at line " + str(line_number))
+			defline = line[len(cur_prot)+1 :].strip()
 			
 		else:
-			cur_seq += line.strip()
+			if len(cur_prot) == 0:
+				fasta.close()
+				raise ValueError("Malformed FASTA in " + str(file) + ": sequence data found before the first header at line " + str(line_number))
+			cur_seq += line
 				
 	fasta.close()
 	
 	#Final iter
-	if len(cur_seq) > 0:
+	if len(cur_prot) > 0:
 		contents[cur_prot] = cur_seq
 		deflines[cur_prot] = defline
 		
@@ -314,15 +344,13 @@ class pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
-				target_acc = hit.accession
+				target_name = normalise_pyhmmer_text(hit.name)
+				target_acc = normalise_pyhmmer_text(hit.accession)
 				if target_acc is None:
 					target_acc = "-"
-				else:
-					target_acc = target_acc.decode()
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_name)
+				query_acc = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_accession)
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
@@ -448,12 +476,14 @@ class pyhmmer_manager:
 			self.filter_to_best_hits()
 			try:
 				self.to_hmm_file(hmm_output)
-			except:
-				print(output, "cannot be created. HMM search failed. This file will be skipped.")
+			except Exception as exc:
+				output_name = hmm_output if hmm_output is not None else "HMM output"
+				raise RuntimeError(f"{output_name} cannot be created. HMM search failed.") from exc
 
-		except:
-			print(output, "failed to run through HMMER!")
+		except Exception as exc:
 			self.best_hits = None
+			output_name = hmm_output if hmm_output is not None else "HMM output"
+			raise RuntimeError(f"{output_name} failed to run through HMMER.") from exc
 
 class new_pyhmmer_manager:
 	def __init__(self, compress = True):
@@ -477,7 +507,10 @@ class new_pyhmmer_manager:
 		
 	def load_hmm_from_file(self, hmm_file):
 		ar = agnostic_reader(hmm_file)
-		hmm_text = ar.read()
+		try:
+			hmm_text = ar.read()
+		finally:
+			ar.close()
 		hmm_io = io.BytesIO(hmm_text.encode(encoding = "ascii"))
 		self.convert_hmm_to_digital(hmm_io)
 			
@@ -523,15 +556,13 @@ class new_pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
-				target_acc = hit.accession
+				target_name = normalise_pyhmmer_text(hit.name)
+				target_acc = normalise_pyhmmer_text(hit.accession)
 				if target_acc is None:
 					target_acc = "-"
-				else:
-					target_acc = target_acc.decode()
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_name)
+				query_acc = normalise_pyhmmer_text(hit.best_domain.alignment.hmm_accession)
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
@@ -817,7 +848,6 @@ class new_pyrodigal_manager:
 			
 			for seq in self.current_genes:
 				self.current_genes[seq].write_translations(self.genes_aa, seq)
-				self.protein_seqs[seq] = {}
 				
 			self.genes_aa = self.genes_aa.getvalue()
 		
@@ -852,17 +882,14 @@ class new_pyrodigal_manager:
 class agnostic_reader_iterator:
 	def __init__(self, reader):
 		self.handle_ = reader.handle
-		self.is_gz_ = reader.is_gz
+		self.path_ = reader.path
 		
 	def __next__(self):
-		if self.is_gz_:
-			line = self.handle_.readline().decode()
-		else:
-			line = self.handle_.readline()
+		line = self.handle_.readline()
 		
 		#Ezpz EOF check
 		if line:
-			return line
+			return decode_text_buffer(line, self.path_)
 		else:
 			raise StopIteration
 
@@ -878,12 +905,17 @@ class agnostic_reader:
 		self.is_gz = is_gz
 		
 		if is_gz:
-			self.handle = gzip.open(self.path)
+			self.handle = gzip.open(self.path, "rb")
 		else:
-			self.handle = open(self.path)
+			self.handle = open(self.path, "rb")
 			
 	def __iter__(self):
 		return agnostic_reader_iterator(self)
+
+	def read(self):
+		"""Return the full file contents as text."""
+		contents = self.handle.read()
+		return decode_text_buffer(contents, self.path)
 		
 	def close(self):
 		self.handle.close()
