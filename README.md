@@ -15,7 +15,12 @@ Fast estimation of Average Amino Acid Identities (AAI) for bacterial and archaea
 * 
 
 ## Citation
-Coming soon
+
+Gerhardt K, Ruiz-Perez CA, Rodriguez-R LM, Jain C, Tiedje JM, Cole JR,
+Konstantinidis KT. FastAAI: efficient estimation of genome average amino acid
+identity and phylum-level relationships using tetramers of universal proteins.
+*Nucleic Acids Research*. 2025;53(8):gkaf348.
+[doi:10.1093/nar/gkaf348](https://doi.org/10.1093/nar/gkaf348)
 
 ## Requirements:
 - Python >=3.10
