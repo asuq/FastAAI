@@ -36,6 +36,11 @@ from math import ceil
 
 import re
 
+try:
+	from ._version import __version__
+except ImportError:
+	from _version import __version__
+
 
 class progress_tracker:
 	def __init__(self, total, step_size = 2, message = None, one_line = True):
@@ -4535,7 +4540,8 @@ def main():
 	selection = sys.argv[1]
 	
 	if selection == "version":
-		sys.exit("FastAAI version=0.1.17")
+		print("FastAAI version=" + __version__)
+		return None
 	
 	if selection not in modules:
 		print("")
